@@ -1,0 +1,16 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment (if using one)
+venv/
+.venv/
+
+# Ignore downloaded/test images
+*.jpg
+*.jpeg
+*.png
+
+# Environment / Secret files
+.env
