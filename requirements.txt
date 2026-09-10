@@ -1,0 +1,6 @@
+# Only what this project actually uses right now.
+# The app code is pure standard library so far, so this is just the test tool.
+# Later phases add their own deps (see ROADMAP.md):
+#   Phase 2+  fastapi  uvicorn[standard]  jinja2  httpx  rapidfuzz  python-multipart
+
+pytest
