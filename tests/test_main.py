@@ -120,6 +120,58 @@ def test_refresh_prices_redirects_with_count(client, monkeypatch):
     resp = client.post("/refresh-prices")
     assert resp.status_code == 200
     assert "Refreshed 0 prices." in resp.text
+    assert "Last refreshed" in resp.text
+
+
+def test_refresh_prices_hx_request_returns_fragment(client, monkeypatch):
+    monkeypatch.setattr(service.scryfall, "get_cards_collection", lambda ids: [])
+    resp = client.post("/refresh-prices", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+    assert "Refreshed 0 prices." in resp.text
+    assert "<nav" not in resp.text  # fragment, not the full page shell
+
+
+def test_collection_stats_header(client, monkeypatch):
+    monkeypatch.setattr(service.scryfall, "get_card", lambda cid: _card(cid, "Sol Ring"))
+    service.add_owned("abc", quantity=3)
+
+    resp = client.get("/collection")
+    assert resp.status_code == 200
+    assert "3" in resp.text  # total copies
+    assert "$3.00" in resp.text  # 3 * $1.00 from _card()'s default price
+
+
+def test_quantity_stepper_hx_request_swaps_fragment_and_updates_total(client, monkeypatch):
+    monkeypatch.setattr(service.scryfall, "get_card", lambda cid: _card(cid, "Sol Ring"))
+    row = service.add_owned("abc", quantity=1)
+
+    resp = client.post(
+        f"/collection/{row['id']}", data={"quantity": "3"}, headers={"HX-Request": "true"}
+    )
+    assert resp.status_code == 200
+    assert "<nav" not in resp.text
+    assert "$3.00" in resp.text  # value updated in the same swapped fragment
+
+
+def test_quantity_stepper_to_zero_removes_row(client, monkeypatch):
+    monkeypatch.setattr(service.scryfall, "get_card", lambda cid: _card(cid, "Sol Ring"))
+    row = service.add_owned("abc", quantity=1)
+
+    resp = client.post(
+        f"/collection/{row['id']}", data={"quantity": "0"}, headers={"HX-Request": "true"}
+    )
+    assert resp.status_code == 200
+    assert "No cards in your collection yet." in resp.text
+
+
+def test_delete_hx_request_returns_updated_fragment(client, monkeypatch):
+    monkeypatch.setattr(service.scryfall, "get_card", lambda cid: _card(cid, "Sol Ring"))
+    row = service.add_owned("abc", quantity=1)
+
+    resp = client.post(f"/collection/{row['id']}/delete", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+    assert "<nav" not in resp.text
+    assert "No cards in your collection yet." in resp.text
 
 
 def test_api_search_returns_json(client, monkeypatch):

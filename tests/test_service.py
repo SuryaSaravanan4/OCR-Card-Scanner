@@ -217,3 +217,25 @@ def test_refresh_prices_does_nothing_when_no_stale_owned_cards(db, monkeypatch):
 
     monkeypatch.setattr(service.scryfall, "get_cards_collection", fake_collection)
     assert service.refresh_prices() == 0
+
+
+def test_refresh_prices_records_last_refresh_time(db, monkeypatch):
+    monkeypatch.setattr(service.scryfall, "get_cards_collection", lambda ids: [])
+    assert store.get_meta("last_refresh_at") is None
+    service.refresh_prices()
+    assert store.get_meta("last_refresh_at") is not None
+
+
+def test_refresh_prices_does_not_record_time_when_offline(db, monkeypatch):
+    old_ts = "2000-01-01T00:00:00+00:00"
+    store.upsert_card(_card("a", "Card a"))
+    store.upsert_prices(_card("a", "Card a"), updated_at=old_ts)
+    store.add_to_collection("a", quantity=1)
+
+    def offline(ids):
+        raise ScryfallOffline("no network")
+
+    monkeypatch.setattr(service.scryfall, "get_cards_collection", offline)
+    with pytest.raises(ScryfallOffline):
+        service.refresh_prices()
+    assert store.get_meta("last_refresh_at") is None

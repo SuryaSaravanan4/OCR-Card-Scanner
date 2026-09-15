@@ -45,7 +45,7 @@ only a genuinely new lookup or a price refresh needs the internet. See
 | 2 | Scryfall API client | **done** |
 | 3 | Cache-aside service (miss -> fetch -> write-back) + ranking | **done** |
 | 4 | Web UI: search + browse (FastAPI, Jinja, HTMX) | **done** |
-| 5 | Collection UI + weekly price refresh | planned |
+| 5 | Collection UI + weekly price refresh | **done** |
 | 6 | Point the OCR script at the local API + accuracy tuning | planned |
 
 Phase-by-phase detail lives in `ROADMAP.md` (local, not committed).
@@ -237,16 +237,21 @@ at `http://localhost:8000/docs`.
 | `GET /` | search box |
 | `GET /search?q=` | ranks candidates via `service.search`; returns just the results fragment for an HTMX request (`HX-Request` header), or the full page otherwise |
 | `GET /cards/{id}` | card detail + "add to collection" form, via `service.get_card` |
-| `GET /collection` | the owned-cards table + grand total |
+| `GET /collection` | the owned-cards table, header stats, and grand total |
 | `POST /collection` | add a card (`card_id, finish, quantity, condition`) via `service.add_owned` |
 | `POST /collection/{id}` | set a row's quantity (`store.set_quantity`; below 1 deletes it) |
 | `POST /collection/{id}/delete` | remove a row |
-| `POST /refresh-prices` | run `service.refresh_prices()`, redirect back with a "refreshed N" flash |
+| `POST /refresh-prices` | run `service.refresh_prices()`, show "refreshed N" + "last refreshed <time>" |
 | `GET /api/search?q=` | JSON variant of `/search`, for Phase 6's OCR script |
 
-Only `/search` uses HTMX (`hx-get` + `hx-target="#results"`) for
-search-as-you-type; the collection forms are plain HTML forms (no JS
-required) since per-row swap polish is Phase 5.
+`/search` uses HTMX (`hx-get` + `hx-target="#results"`) for
+search-as-you-type. On the collection page, the quantity `+`/`-` buttons and
+Remove button are also HTMX (`hx-post` + `hx-target="#collection"`) and swap
+the *whole* collection panel (table, stats header, and total together) so
+nothing goes stale after a change - not just the one row. `POST /collection`
+(adding a card from the card-detail page) is a plain form + redirect, since
+it navigates from a different page. Every HTMX route still degrades to a
+plain 303 redirect for a non-`HX-Request` POST, so nothing here requires JS.
 
 **Offline handling:** `/search` and `/cards/{id}` are the two places a lookup
 can genuinely fail with no network (a cache miss has nothing to fall back
@@ -272,6 +277,12 @@ the TTL checks.
 `(card_id, finish, condition)`. `list_collection()` values each row against the
 price column matching its finish and skips rows with an unknown price in the
 total.
+
+**`meta`** - generic `key`/`value` settings table (`app/store/meta.py`:
+`get_meta`/`set_meta`). Currently holds one key, `last_refresh_at`, written by
+`service.refresh_prices()` on every successful run (not written if it raises
+`ScryfallOffline`, so the collection page never claims a refresh happened when
+it didn't).
 
 ## OCR
 

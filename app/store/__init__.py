@@ -17,6 +17,7 @@ from .collection import (
     remove_from_collection,
     set_quantity,
 )
+from .meta import get_meta, set_meta
 from .prices import get_prices, price_age_days, stale_card_ids, upsert_prices
 from ._common import FINISHES
 
@@ -35,4 +36,7 @@ __all__ = [
     "list_collection",
     "remove_from_collection",
     "set_quantity",
+    # meta
+    "get_meta",
+    "set_meta",
 ]

@@ -13,11 +13,11 @@
     <p>{{ card.set_name }} ({{ (card.set_code or "")|upper }}) #{{ card.collector_number }} - {{ card.rarity }}</p>
     <p>{{ card.mana_cost }} - {{ card.type_line }}</p>
     <p style="white-space: pre-line">{{ card.oracle_text }}</p>
-    <p>
-      USD: {{ "$%.2f"|format(card.usd) if card.usd is not none else "n/a" }} |
-      Foil: {{ "$%.2f"|format(card.usd_foil) if card.usd_foil is not none else "n/a" }} |
-      Etched: {{ "$%.2f"|format(card.usd_etched) if card.usd_etched is not none else "n/a" }}
-    </p>
+    <div class="price-pills">
+      <span class="price-pill"><small>USD</small>{{ "$%.2f"|format(card.usd) if card.usd is not none else "n/a" }}</span>
+      <span class="price-pill"><small>Foil</small>{{ "$%.2f"|format(card.usd_foil) if card.usd_foil is not none else "n/a" }}</span>
+      <span class="price-pill"><small>Etched</small>{{ "$%.2f"|format(card.usd_etched) if card.usd_etched is not none else "n/a" }}</span>
+    </div>
     <form method="post" action="/collection">
       <input type="hidden" name="card_id" value="{{ card.id }}">
       <div class="grid">

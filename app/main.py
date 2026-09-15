@@ -10,6 +10,7 @@ notice instead of a generic error page.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -61,12 +62,42 @@ def card_detail(request: Request, card_id: str):
     return templates.TemplateResponse(request, "card.html", {"card": card, "offline": False})
 
 
+def _format_last_refresh(iso: str | None) -> str | None:
+    if not iso:
+        return None
+    return datetime.fromisoformat(iso).strftime("%b %d, %Y %H:%M UTC")
+
+
+def _collection_context(refreshed: int | None = None) -> dict:
+    """Shared context for both the full collection page and its HTMX fragment,
+    so a mutation (quantity change, delete, refresh) always re-renders the
+    whole panel - stats and total stay correct, never one render behind."""
+    data = store.list_collection()
+    rows = data["rows"]
+    stats = {
+        "card_count": len(rows),
+        "total_quantity": sum(row["quantity"] for row in rows),
+        "unknown_price_count": sum(1 for row in rows if row["unit_price"] is None),
+    }
+    return {
+        "rows": rows,
+        "total": data["total"],
+        "stats": stats,
+        "refreshed": refreshed,
+        "last_refresh_at": _format_last_refresh(store.get_meta("last_refresh_at")),
+    }
+
+
+def _render_collection(request: Request, refreshed: int | None = None) -> HTMLResponse:
+    """Fragment-or-full-page response, same pattern as `/search`."""
+    context = _collection_context(refreshed)
+    template = "_collection.html" if request.headers.get("HX-Request") else "collection.html"
+    return templates.TemplateResponse(request, template, context)
+
+
 @app.get("/collection", response_class=HTMLResponse)
 def collection_page(request: Request, refreshed: int | None = None):
-    data = store.list_collection()
-    return templates.TemplateResponse(
-        request, "collection.html", {"rows": data["rows"], "total": data["total"], "refreshed": refreshed}
-    )
+    return _render_collection(request, refreshed=refreshed)
 
 
 @app.post("/collection")
@@ -80,21 +111,27 @@ def add_owned_route(
     return RedirectResponse(url="/collection", status_code=303)
 
 
-@app.post("/collection/{collection_id}")
-def update_quantity_route(collection_id: int, quantity: int = Form(...)):
+@app.post("/collection/{collection_id}", response_class=HTMLResponse)
+def update_quantity_route(request: Request, collection_id: int, quantity: int = Form(...)):
     store.set_quantity(collection_id, quantity)
+    if request.headers.get("HX-Request"):
+        return _render_collection(request)
     return RedirectResponse(url="/collection", status_code=303)
 
 
-@app.post("/collection/{collection_id}/delete")
-def delete_collection_row_route(collection_id: int):
+@app.post("/collection/{collection_id}/delete", response_class=HTMLResponse)
+def delete_collection_row_route(request: Request, collection_id: int):
     store.remove_from_collection(collection_id)
+    if request.headers.get("HX-Request"):
+        return _render_collection(request)
     return RedirectResponse(url="/collection", status_code=303)
 
 
-@app.post("/refresh-prices")
-def refresh_prices_route():
+@app.post("/refresh-prices", response_class=HTMLResponse)
+def refresh_prices_route(request: Request):
     refreshed = service.refresh_prices()
+    if request.headers.get("HX-Request"):
+        return _render_collection(request, refreshed=refreshed)
     return RedirectResponse(url=f"/collection?refreshed={refreshed}", status_code=303)
 
 

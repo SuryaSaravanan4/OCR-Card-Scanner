@@ -5,6 +5,8 @@ from SQLite or falls through to Scryfall stays invisible to them.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from rapidfuzz import fuzz
 
 from . import config, scryfall, store
@@ -93,13 +95,16 @@ def refresh_prices() -> int:
     """Batch-refresh every stale price for cards actually in the collection.
 
     Returns how many cards were refreshed. This is the weekly job - it never
-    touches cards you don't own, and never fetches static card data, only prices.
+    touches cards you don't own, and never fetches static card data, only
+    prices. Records `last_refresh_at` in the `meta` table (the UI's "last
+    refreshed <time>" line) - only on a successful run, so an offline attempt
+    that raises doesn't claim a refresh that didn't happen.
     """
     ids = store.stale_card_ids(config.PRICE_TTL_DAYS, only_collection=True)
-    if not ids:
-        return 0
     refreshed = 0
-    for data in scryfall.get_cards_collection(ids):  # already chunks at 75 internally
-        store.upsert_prices(data)
-        refreshed += 1
+    if ids:
+        for data in scryfall.get_cards_collection(ids):  # already chunks at 75 internally
+            store.upsert_prices(data)
+            refreshed += 1
+    store.set_meta("last_refresh_at", datetime.now(timezone.utc).isoformat())
     return refreshed

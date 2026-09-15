@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS collection (
     UNIQUE (card_id, finish, condition)
 );
 CREATE INDEX IF NOT EXISTS idx_collection_card_id ON collection(card_id);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
