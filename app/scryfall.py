@@ -23,6 +23,16 @@ class ScryfallError(Exception):
     """Raised when a Scryfall call fails after retries, or returns an error object."""
 
 
+class ScryfallOffline(ScryfallError):
+    """Raised when Scryfall couldn't be reached at all (DNS/connection failure),
+    as opposed to Scryfall responding with an error. Callers can catch this
+    specifically to distinguish "we're offline" from "Scryfall rejected this" -
+    e.g. app/service.py falls back to a stale cached price instead of failing
+    outright, and a future UI can prompt "connect to wifi" instead of a
+    generic error page.
+    """
+
+
 class ScryfallClient:
     """Thin wrapper around httpx with Scryfall's rate-limit and retry rules built in.
 
@@ -58,19 +68,24 @@ class ScryfallClient:
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         last_exc: Exception | None = None
+        offline = False  # tracks whether the *last* failed attempt was a connection failure
         for attempt in range(MAX_RETRIES + 1):
             self._throttle()
             try:
                 resp = self._http.request(method, url, **kwargs)
             except httpx.TransportError as exc:
                 last_exc = exc
+                offline = True
             else:
                 self._last_request = time.monotonic()
                 if resp.status_code not in RETRYABLE_STATUS:
                     return resp
                 last_exc = ScryfallError(f"{method} {url} -> HTTP {resp.status_code}")
+                offline = False
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_BACKOFF[attempt])
+        if offline:
+            raise ScryfallOffline(f"{method} {url}: could not reach Scryfall") from last_exc
         raise ScryfallError(f"{method} {url} failed after {MAX_RETRIES} retries") from last_exc
 
     # -- public API ----------------------------------------------------------

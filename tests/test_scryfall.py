@@ -8,7 +8,7 @@ import json
 import httpx
 import pytest
 
-from app.scryfall import ScryfallClient, ScryfallError
+from app.scryfall import ScryfallClient, ScryfallError, ScryfallOffline
 
 
 def _json_response(status_code: int, payload: dict) -> httpx.Response:
@@ -119,6 +119,24 @@ def test_raises_after_exhausting_retries(monkeypatch):
 
     with pytest.raises(ScryfallError):
         make_client(handler).get_card("abc")
+
+
+def test_connection_failure_raises_scryfall_offline(monkeypatch):
+    """No network at all (DNS/connect failure) should be distinguishable from
+    Scryfall responding with an error, so callers can prompt "connect to wifi"
+    instead of a generic failure."""
+    monkeypatch.setattr("app.scryfall.time.sleep", lambda s: None)
+
+    def handler(request):
+        raise httpx.ConnectError("no network", request=request)
+
+    with pytest.raises(ScryfallOffline):
+        make_client(handler).get_card("abc")
+
+
+def test_scryfall_offline_is_a_scryfall_error():
+    # so code that only handles the general case still catches this too
+    assert issubclass(ScryfallOffline, ScryfallError)
 
 
 def test_get_cards_collection_chunks_at_75(monkeypatch):

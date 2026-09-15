@@ -38,7 +38,7 @@ local cache so the card API is only queried for cards it hasn't seen before.
 |------:|-------|-------|
 | 1 | Local data layer (SQLite, network-free) | **done** |
 | 2 | Scryfall API client | **done** |
-| 3 | Cache-aside service (miss -> fetch -> write-back) + ranking | **ranking done**, cache-aside pending |
+| 3 | Cache-aside service (miss -> fetch -> write-back) + ranking | **done** |
 | 4 | Web UI: search + browse (FastAPI, Jinja, HTMX) | planned |
 | 5 | Collection UI + weekly price refresh | planned |
 | 6 | Point the OCR script at the local API + accuracy tuning | planned |
@@ -59,12 +59,14 @@ app/
   service.py         ranks Scryfall's raw printings into a short "most likely" list
 scripts/
   fake_data.py       fill data/cards.db with sample cards; a stand-in for
-                     Scryfall as the data source until it's wired in (Phase 3)
+                     Scryfall as the data source now that fake_data isn't the
+                     only way in (kept for tests/demos)
   try_scryfall.py    manual sanity check against the real Scryfall API + ranking
 tests/
+  conftest.py        shared `db` fixture (throwaway temp SQLite per test)
   test_store.py      round-trip tests for the data layer
   test_scryfall.py   Scryfall client tests (HTTP fully mocked)
-  test_service.py    ranking tests (scryfall calls mocked)
+  test_service.py    ranking + cache-aside tests (scryfall calls mocked)
 data/
   cards.db           the local database (created on first run, git-ignored)
 ```
@@ -148,6 +150,44 @@ personal contact info), waits at least `config.SCRYFALL_MIN_INTERVAL` between
 requests, and retries 429/503 responses with backoff before giving up and
 raising `ScryfallError`. `tests/test_scryfall.py` mocks all HTTP so the suite
 never touches the network.
+
+## Cache-aside service (`app/service.py`)
+
+This is the seam between the Scryfall client and the database - routes and
+templates call these functions and never know whether a read came from
+SQLite or Scryfall.
+
+- `get_card(card_id)` - serves from SQLite if cached and the price is still
+  within `PRICE_TTL_DAYS`; otherwise fetches from Scryfall and writes back
+  (a miss writes both the card and its price; a stale hit re-fetches and
+  rewrites only the price). Returns the card merged with its current prices.
+- `add_owned(card_id, quantity, finish, condition)` - calls `get_card` first
+  so the card is always cached before being recorded as owned, then adds it
+  to the collection.
+- `refresh_prices()` - the weekly job. Refetches prices for every stale card
+  that's actually in the collection (via Scryfall's batch endpoint) and
+  returns how many were refreshed. Never touches uncached or unowned cards.
+
+Verified against the real API: a fresh card id triggers exactly one Scryfall
+call and gets cached; reading it again makes none.
+
+### Working offline
+
+Browsing already-cached data (your collection, a card you've opened before,
+even a stale price) needs no network at all. `scryfall.py` raises a distinct
+`ScryfallOffline` when it can't reach the network (as opposed to a normal
+`ScryfallError`, which means Scryfall responded but rejected the request).
+`service.get_card` treats those two cases differently:
+
+- **Cache miss + offline** - nothing to fall back to, so `ScryfallOffline`
+  propagates. This is the future UI's cue to prompt "connect to wifi" instead
+  of a generic error (not built yet - see ROADMAP.md Phase 4).
+- **Stale price + offline** - the card is already cached, so the stale price
+  refresh is skipped silently and the last-known data is served. No error.
+
+Verified against the live cache: an already-seen card served correctly with
+`scryfall.get_card` forced to simulate offline, while a never-seen id raised
+`ScryfallOffline` as expected.
 
 ## Ranking (`app/service.py`)
 

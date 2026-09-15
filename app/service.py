@@ -1,15 +1,13 @@
 """The seam between app/scryfall.py and app/store/.
 
-Only `search()` exists so far - it ranks Scryfall's raw printings so callers
-see "most likely match first" instead of every printing Scryfall knows about
-(a popular card like Sol Ring has 100+). The read-through cache (`get_card`,
-`add_owned`, `refresh_prices`) is added once this is wired to app/store/.
+Routes and (later) templates call functions here; whether a read is served
+from SQLite or falls through to Scryfall stays invisible to them.
 """
 from __future__ import annotations
 
 from rapidfuzz import fuzz
 
-from . import scryfall
+from . import config, scryfall, store
 
 
 def search(text: str, limit: int = 10) -> list[dict]:
@@ -47,3 +45,61 @@ def _to_candidate(card: dict) -> dict:
         "image_uri": image,
         "price_usd": (card.get("prices") or {}).get("usd"),
     }
+
+
+def get_card(card_id: str) -> dict:
+    """The cache-aside read: serve from SQLite, falling through to Scryfall on
+    a cache miss or when the stored price is older than PRICE_TTL_DAYS.
+
+    Offline handling: a cache MISS with no network raises `ScryfallOffline` -
+    there is nothing to fall back to, so the caller (eventually the UI) should
+    prompt to connect. A STALE price with no network is not fatal - we already
+    have a card to show, so we serve the stale cached price rather than fail
+    outright. Any other Scryfall error (a real API error, not connectivity)
+    still propagates in both cases.
+
+    Returns the cached card's columns merged with its current prices.
+    """
+    card = store.get_card(card_id)
+    if card is None:
+        data = scryfall.get_card(card_id)  # nothing cached - offline must raise
+        store.upsert_card(data)
+        store.upsert_prices(data)
+        card = store.get_card(card_id)
+    else:
+        age = store.price_age_days(card_id)
+        if age is None or age > config.PRICE_TTL_DAYS:
+            try:
+                store.upsert_prices(scryfall.get_card(card_id))
+            except scryfall.ScryfallOffline:
+                pass  # offline - serve what's already cached instead of failing
+
+    prices = store.get_prices(card_id) or {}
+    return {**card, **{k: v for k, v in prices.items() if k != "card_id"}}
+
+
+def add_owned(
+    card_id: str,
+    quantity: int = 1,
+    finish: str = "nonfoil",
+    condition: str = "",
+) -> dict:
+    """Record ownership of a card, making sure it's cached (and priced) first."""
+    get_card(card_id)
+    return store.add_to_collection(card_id, quantity=quantity, finish=finish, condition=condition)
+
+
+def refresh_prices() -> int:
+    """Batch-refresh every stale price for cards actually in the collection.
+
+    Returns how many cards were refreshed. This is the weekly job - it never
+    touches cards you don't own, and never fetches static card data, only prices.
+    """
+    ids = store.stale_card_ids(config.PRICE_TTL_DAYS, only_collection=True)
+    if not ids:
+        return 0
+    refreshed = 0
+    for data in scryfall.get_cards_collection(ids):  # already chunks at 75 internally
+        store.upsert_prices(data)
+        refreshed += 1
+    return refreshed
