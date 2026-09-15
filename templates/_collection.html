@@ -1,0 +1,33 @@
+{% if not rows %}
+<p>No cards in your collection yet.</p>
+{% else %}
+<table>
+  <thead>
+    <tr><th>Card</th><th>Set</th><th>Finish</th><th>Condition</th><th>Qty</th><th>Unit</th><th>Value</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><a href="/cards/{{ row.card_id }}">{{ row.name }}</a></td>
+      <td>{{ (row.set_code or "")|upper }} #{{ row.collector_number }}</td>
+      <td>{{ row.finish }}</td>
+      <td>{{ row.condition }}</td>
+      <td>
+        <form method="post" action="/collection/{{ row.id }}" style="display:inline">
+          <input type="number" name="quantity" value="{{ row.quantity }}" min="0" style="width:5em">
+          <button type="submit">Update</button>
+        </form>
+      </td>
+      <td>{{ "$%.2f"|format(row.unit_price) if row.unit_price is not none else "n/a" }}</td>
+      <td>{{ "$%.2f"|format(row.line_value) if row.line_value is not none else "n/a" }}</td>
+      <td>
+        <form method="post" action="/collection/{{ row.id }}/delete" style="display:inline">
+          <button type="submit">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p><strong>Total: ${{ "%.2f"|format(total) }}</strong></p>
+{% endif %}

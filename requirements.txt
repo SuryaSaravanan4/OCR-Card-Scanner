@@ -1,10 +1,17 @@
-# pytest    - test suite
-# httpx     - Scryfall API client (app/scryfall.py)
-# rapidfuzz - name-similarity ranking (app/service.py)
+# pytest             - test suite
+# httpx              - Scryfall API client (app/scryfall.py)
+# rapidfuzz          - name-similarity ranking (app/service.py)
+# fastapi            - web app (app/main.py)
+# uvicorn[standard]  - ASGI server to run the app
+# jinja2             - server-rendered templates
+# python-multipart   - HTML form parsing (collection add/update/delete)
 #
-# Later phases add their own deps (see ROADMAP.md):
-#   Phase 4+  fastapi  uvicorn[standard]  jinja2  python-multipart
+# Later phases add their own deps (see ROADMAP.md).
 
 pytest
 httpx
 rapidfuzz
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart

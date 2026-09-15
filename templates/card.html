@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ card.name if card else "Card" }} - OCR Card Scanner{% endblock %}
+{% block content %}
+{% if offline %}
+<p class="offline-notice">You're offline - connect to wifi to look up new cards.</p>
+{% else %}
+<article class="card-detail">
+  <div class="card-detail-image">
+    {% if card.image_uri %}<img src="{{ card.image_uri }}" alt="{{ card.name }}">{% endif %}
+  </div>
+  <div class="card-detail-info">
+    <h1>{{ card.name }}</h1>
+    <p>{{ card.set_name }} ({{ (card.set_code or "")|upper }}) #{{ card.collector_number }} - {{ card.rarity }}</p>
+    <p>{{ card.mana_cost }} - {{ card.type_line }}</p>
+    <p style="white-space: pre-line">{{ card.oracle_text }}</p>
+    <p>
+      USD: {{ "$%.2f"|format(card.usd) if card.usd is not none else "n/a" }} |
+      Foil: {{ "$%.2f"|format(card.usd_foil) if card.usd_foil is not none else "n/a" }} |
+      Etched: {{ "$%.2f"|format(card.usd_etched) if card.usd_etched is not none else "n/a" }}
+    </p>
+    <form method="post" action="/collection">
+      <input type="hidden" name="card_id" value="{{ card.id }}">
+      <div class="grid">
+        <label>Quantity <input type="number" name="quantity" value="1" min="1"></label>
+        <label>Finish
+          <select name="finish">
+            <option value="nonfoil">Nonfoil</option>
+            <option value="foil">Foil</option>
+            <option value="etched">Etched</option>
+          </select>
+        </label>
+        <label>Condition <input type="text" name="condition" placeholder="e.g. NM"></label>
+      </div>
+      <button type="submit">Add to collection</button>
+    </form>
+  </div>
+</article>
+{% endif %}
+{% endblock %}

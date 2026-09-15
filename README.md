@@ -44,7 +44,7 @@ only a genuinely new lookup or a price refresh needs the internet. See
 | 1 | Local data layer (SQLite, network-free) | **done** |
 | 2 | Scryfall API client | **done** |
 | 3 | Cache-aside service (miss -> fetch -> write-back) + ranking | **done** |
-| 4 | Web UI: search + browse (FastAPI, Jinja, HTMX) | planned |
+| 4 | Web UI: search + browse (FastAPI, Jinja, HTMX) | **done** |
 | 5 | Collection UI + weekly price refresh | planned |
 | 6 | Point the OCR script at the local API + accuracy tuning | planned |
 
@@ -62,6 +62,9 @@ app/
     collection.py      the `collection` table
   scryfall.py        Scryfall API client - the only module that hits the network
   service.py         ranks Scryfall's raw printings into a short "most likely" list
+  main.py            FastAPI app + routes - the browse/search UI
+templates/           Jinja templates rendered by app/main.py
+static/              style.css, served at /static
 scripts/
   fake_data.py       fill data/cards.db with sample cards; a stand-in for
                      Scryfall as the data source now that fake_data isn't the
@@ -90,8 +93,8 @@ python -m pip install -r requirements.txt
 ```
 
 Current dependencies: `pytest` (test suite), `httpx` (Scryfall client),
-`rapidfuzz` (ranking). Phase 4 adds `fastapi`, `uvicorn[standard]`, `jinja2`,
-`python-multipart` to `requirements.txt` when it lands - see `ROADMAP.md`.
+`rapidfuzz` (ranking), `fastapi` + `uvicorn[standard]` + `jinja2` +
+`python-multipart` (web UI).
 
 ## Usage
 
@@ -216,6 +219,42 @@ explicit set/collector-number input once OCR can read it off the card (Phase 6)
 tested live, `search_by_name("sol ring commander legends")` returns zero
 results, since Scryfall's fuzzy-name endpoint isn't a general search and
 chokes on a combined name+set string.
+
+## Web UI (`app/main.py`, `templates/`)
+
+Server-rendered Jinja + HTMX, no build step or JS bundler - just FastAPI
+rendering templates. Run it with:
+
+```bash
+python -m uvicorn app.main:app --reload
+```
+
+Then open `http://localhost:8000`. Every endpoint can also be poked directly
+at `http://localhost:8000/docs`.
+
+| Method + path | Does |
+|---|---|
+| `GET /` | search box |
+| `GET /search?q=` | ranks candidates via `service.search`; returns just the results fragment for an HTMX request (`HX-Request` header), or the full page otherwise |
+| `GET /cards/{id}` | card detail + "add to collection" form, via `service.get_card` |
+| `GET /collection` | the owned-cards table + grand total |
+| `POST /collection` | add a card (`card_id, finish, quantity, condition`) via `service.add_owned` |
+| `POST /collection/{id}` | set a row's quantity (`store.set_quantity`; below 1 deletes it) |
+| `POST /collection/{id}/delete` | remove a row |
+| `POST /refresh-prices` | run `service.refresh_prices()`, redirect back with a "refreshed N" flash |
+| `GET /api/search?q=` | JSON variant of `/search`, for Phase 6's OCR script |
+
+Only `/search` uses HTMX (`hx-get` + `hx-target="#results"`) for
+search-as-you-type; the collection forms are plain HTML forms (no JS
+required) since per-row swap polish is Phase 5.
+
+**Offline handling:** `/search` and `/cards/{id}` are the two places a lookup
+can genuinely fail with no network (a cache miss has nothing to fall back
+to) - they catch `scryfall.ScryfallOffline` specifically and render a "you're
+offline" notice instead of a stack trace. Everything already cached
+(`/collection`, a previously-opened card, a stale-but-cached price) needs no
+network and renders normally regardless of connectivity, same as
+`service.get_card` already handles - see "Working offline" above.
 
 ## Data model
 

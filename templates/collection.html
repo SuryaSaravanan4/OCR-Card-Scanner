@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Collection</h1>
+{% if refreshed is not none %}
+<p class="flash">Refreshed {{ refreshed }} price{{ "s" if refreshed != 1 else "" }}.</p>
+{% endif %}
+<form method="post" action="/refresh-prices">
+  <button type="submit">Refresh prices</button>
+</form>
+<div id="collection">
+  {% include "_collection.html" %}
+</div>
+{% endblock %}

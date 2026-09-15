@@ -1,0 +1,33 @@
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+}
+.card-tile {
+  text-decoration: none;
+  color: inherit;
+}
+.card-tile img {
+  width: 100%;
+  border-radius: 6px;
+}
+.card-tile-info {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+}
+.card-detail {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+.card-detail-image img {
+  max-width: 300px;
+  border-radius: 8px;
+}
+.offline-notice {
+  color: var(--pico-del-color, #c0392b);
+}
+.flash {
+  color: var(--pico-ins-color, #27ae60);
+}
