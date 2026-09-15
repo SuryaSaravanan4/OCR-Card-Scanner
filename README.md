@@ -32,6 +32,11 @@ local cache so the card API is only queried for cards it hasn't seen before.
   only yields a card *name*, lookups return a ranked list of printings and the
   user picks the exact one; only the picked card is stored.
 
+**Deployment target:** intended to run on a Raspberry Pi that may not always
+be on wifi. Viewing the UI itself never needs a network (it's served locally);
+only a genuinely new lookup or a price refresh needs the internet. See
+"Working offline" below for exactly what does and doesn't require connectivity.
+
 ## Status
 
 | Phase | Scope | State |
@@ -78,15 +83,15 @@ imported directly.
 
 ## Setup
 
-Requires Python 3.11+. The app code is pure standard library so far, so the only
-dependency is `pytest`, for the test suite:
+Requires Python 3.11+.
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-Later phases add their own dependencies (FastAPI, httpx, rapidfuzz, ...) - those
-get added to `requirements.txt` as each phase lands. See `ROADMAP.md`.
+Current dependencies: `pytest` (test suite), `httpx` (Scryfall client),
+`rapidfuzz` (ranking). Phase 4 adds `fastapi`, `uvicorn[standard]`, `jinja2`,
+`python-multipart` to `requirements.txt` when it lands - see `ROADMAP.md`.
 
 ## Usage
 
