@@ -37,8 +37,8 @@ local cache so the card API is only queried for cards it hasn't seen before.
 | Phase | Scope | State |
 |------:|-------|-------|
 | 1 | Local data layer (SQLite, network-free) | **done** |
-| 2 | Scryfall API client | planned |
-| 3 | Cache-aside service (miss -> fetch -> write-back) + ranking | planned |
+| 2 | Scryfall API client | **done** |
+| 3 | Cache-aside service (miss -> fetch -> write-back) + ranking | **ranking done**, cache-aside pending |
 | 4 | Web UI: search + browse (FastAPI, Jinja, HTMX) | planned |
 | 5 | Collection UI + weekly price refresh | planned |
 | 6 | Point the OCR script at the local API + accuracy tuning | planned |
@@ -55,11 +55,16 @@ app/
     cards.py           the `cards` table
     prices.py          the `card_prices` table
     collection.py      the `collection` table
+  scryfall.py        Scryfall API client - the only module that hits the network
+  service.py         ranks Scryfall's raw printings into a short "most likely" list
 scripts/
-  fake_data.py       fill data/cards.db with sample cards; stands in for
-                     Scryfall as the data source until Phase 2
+  fake_data.py       fill data/cards.db with sample cards; a stand-in for
+                     Scryfall as the data source until it's wired in (Phase 3)
+  try_scryfall.py    manual sanity check against the real Scryfall API + ranking
 tests/
   test_store.py      round-trip tests for the data layer
+  test_scryfall.py   Scryfall client tests (HTTP fully mocked)
+  test_service.py    ranking tests (scryfall calls mocked)
 data/
   cards.db           the local database (created on first run, git-ignored)
 ```
@@ -119,6 +124,53 @@ age = store.price_age_days(card["id"])          # days since we last refreshed
 owned = store.list_collection()                 # rows + grand total
 stale = store.stale_card_ids(config.PRICE_TTL_DAYS, only_collection=True)
 ```
+
+Try the Scryfall client against the real API (a couple of real, rate-limited requests - not part of the test suite):
+
+```bash
+python -m scripts.try_scryfall "sol ring"
+```
+
+## Scryfall client
+
+`app/scryfall.py` is the only module that makes outbound HTTP calls. It knows
+nothing about the database - it just returns plain dicts shaped like Scryfall's
+card objects.
+
+- `search_by_name(text)` - fuzzy-resolves text to a card, then returns every
+  printing of it (falls back to a plain search if the fuzzy match misses).
+- `get_card(card_id)` - fetch one card by id.
+- `get_cards_collection(ids)` - batch fetch, chunked at Scryfall's 75-id limit.
+
+No API key or account is needed - Scryfall is fully open. The client sends a
+descriptive `User-Agent` (`config.USER_AGENT`, currently name+version only, no
+personal contact info), waits at least `config.SCRYFALL_MIN_INTERVAL` between
+requests, and retries 429/503 responses with backoff before giving up and
+raising `ScryfallError`. `tests/test_scryfall.py` mocks all HTTP so the suite
+never touches the network.
+
+## Ranking (`app/service.py`)
+
+A popular card can have 100+ printings, so `search_by_name` alone isn't
+useful to show a user directly. `service.search(text, limit=10)` scores every
+printing's name against `text` with `rapidfuzz`, sorts by (score, most recent
+release), and returns a short list of small dicts (id, name, set, collector
+number, rarity, image, price) - never writes to the database.
+
+If there are fewer than `limit` real printings, exactly that many are returned
+- results are never padded (verified: a 6-printing card returns 6, not 10).
+
+**Known limitation:** when the fuzzy match succeeds, every returned printing
+shares one name, so the similarity score ties across all of them - recency is
+just a tiebreak, not a real relevance signal. A heavily-reprinted card's actual
+printing can fall outside the top 10 if it's an old one. That's expected: a
+name alone can't identify an exact printing. The real fix is a picker UI
+(Phase 4, compare thumbnail + set against the card in hand) and, later, an
+explicit set/collector-number input once OCR can read it off the card (Phase 6)
+- `search()` has no such parameter yet. Note this is not "more words help":
+tested live, `search_by_name("sol ring commander legends")` returns zero
+results, since Scryfall's fuzzy-name endpoint isn't a general search and
+chokes on a combined name+set string.
 
 ## Data model
 

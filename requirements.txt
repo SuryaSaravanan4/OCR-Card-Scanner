@@ -1,6 +1,10 @@
-# Only what this project actually uses right now.
-# The app code is pure standard library so far, so this is just the test tool.
+# pytest    - test suite
+# httpx     - Scryfall API client (app/scryfall.py)
+# rapidfuzz - name-similarity ranking (app/service.py)
+#
 # Later phases add their own deps (see ROADMAP.md):
-#   Phase 2+  fastapi  uvicorn[standard]  jinja2  httpx  rapidfuzz  python-multipart
+#   Phase 4+  fastapi  uvicorn[standard]  jinja2  python-multipart
 
 pytest
+httpx
+rapidfuzz
