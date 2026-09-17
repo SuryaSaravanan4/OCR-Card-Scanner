@@ -12,7 +12,12 @@ from rapidfuzz import fuzz
 from . import config, scryfall, store
 
 
-def search(text: str, limit: int = 10) -> list[dict]:
+def search(
+    text: str,
+    limit: int = 10,
+    set_code: str | None = None,
+    collector_number: str | None = None,
+) -> list[dict]:
     """Return the most likely printings for `text`, best match first.
 
     Each candidate is scored by name similarity to `text` - this is what
@@ -21,8 +26,31 @@ def search(text: str, limit: int = 10) -> list[dict]:
     and the score ties; recency breaks the tie, since there's no way to tell
     which specific printing was scanned from a name alone (that's on the user
     to pick from the shortlist).
+
+    `set_code` / `collector_number` are the real fix for that tie, when OCR
+    can read them off the card: with both, this resolves the exact printing
+    directly (no ambiguity possible) and returns just that one candidate. If
+    that direct lookup 404s (a misread number), it falls back to a name
+    search narrowed to `set_code` rather than returning nothing - the set
+    code may still be good even if the number wasn't. With only `set_code`
+    (no number), the same narrowed query is used, falling back further to a
+    plain name search if even that finds nothing.
     """
-    candidates = scryfall.search_by_name(text)
+    if set_code and collector_number:
+        try:
+            return [_to_candidate(scryfall.get_card_by_set_number(set_code, collector_number))]
+        except scryfall.ScryfallOffline:
+            raise
+        except scryfall.ScryfallError:
+            pass  # misread number - fall through to the name search below
+
+    if set_code:
+        candidates = scryfall.search_by_query(f"set:{set_code} {text}")
+        if not candidates:
+            candidates = scryfall.search_by_name(text)
+    else:
+        candidates = scryfall.search_by_name(text)
+
     scored = [
         (fuzz.WRatio(text, card.get("name", "")), card.get("released_at") or "", card)
         for card in candidates

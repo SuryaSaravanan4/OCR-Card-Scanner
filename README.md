@@ -46,7 +46,7 @@ only a genuinely new lookup or a price refresh needs the internet. See
 | 3 | Cache-aside service (miss -> fetch -> write-back) + ranking | **done** |
 | 4 | Web UI: search + browse (FastAPI, Jinja, HTMX) | **done** |
 | 5 | Collection UI + weekly price refresh | **done** |
-| 6 | Point the OCR script at the local API + accuracy tuning | planned |
+| 6 | Point the OCR script at the local API + accuracy tuning | **done** |
 
 Phase-by-phase detail lives in `ROADMAP.md` (local, not committed).
 
@@ -70,11 +70,14 @@ scripts/
                      Scryfall as the data source now that fake_data isn't the
                      only way in (kept for tests/demos)
   try_scryfall.py    manual sanity check against the real Scryfall API + ranking
+  scan.py            OCR a card photo and query this app's own /api/search
 tests/
   conftest.py        shared `db` fixture (throwaway temp SQLite per test)
   test_store.py      round-trip tests for the data layer
   test_scryfall.py   Scryfall client tests (HTTP fully mocked)
   test_service.py    ranking + cache-aside tests (scryfall calls mocked)
+  test_main.py       route tests (FastAPI TestClient, scryfall calls mocked)
+  test_scan.py       scan.py's OCR-box-picking and name-cleanup logic (no OCR model, no network)
 data/
   cards.db           the local database (created on first run, git-ignored)
 ```
@@ -208,17 +211,26 @@ number, rarity, image, price) - never writes to the database.
 If there are fewer than `limit` real printings, exactly that many are returned
 - results are never padded (verified: a 6-printing card returns 6, not 10).
 
-**Known limitation:** when the fuzzy match succeeds, every returned printing
-shares one name, so the similarity score ties across all of them - recency is
-just a tiebreak, not a real relevance signal. A heavily-reprinted card's actual
-printing can fall outside the top 10 if it's an old one. That's expected: a
-name alone can't identify an exact printing. The real fix is a picker UI
-(Phase 4, compare thumbnail + set against the card in hand) and, later, an
-explicit set/collector-number input once OCR can read it off the card (Phase 6)
-- `search()` has no such parameter yet. Note this is not "more words help":
-tested live, `search_by_name("sol ring commander legends")` returns zero
-results, since Scryfall's fuzzy-name endpoint isn't a general search and
-chokes on a combined name+set string.
+**Name-only limitation:** when the fuzzy match succeeds, every returned
+printing shares one name, so the similarity score ties across all of them -
+recency is just a tiebreak, not a real relevance signal. A heavily-reprinted
+card's actual printing can fall outside the top 10 if it's an old one. A
+name alone can't identify an exact printing - that's what the picker UI
+(Phase 4, compare thumbnail + set against the card in hand) and the
+`set_code`/`collector_number` params below (Phase 6) are for.
+
+`search(text, limit=10, set_code=None, collector_number=None)` - with both
+`set_code` and `collector_number` (read off the card's tiny bottom-left
+line), this resolves the exact printing directly via Scryfall's
+`/cards/{set}/{number}` endpoint - no ambiguity possible, unlike a name
+search. A misread number falls back to a name search narrowed to just that
+set (`set:cmr sol ring`) rather than failing; with only `set_code`, the same
+narrowed query is used. Note this narrowing has to go through the query
+endpoint, not the fuzzy one: tested live, `search_by_name("sol ring
+commander legends")` returns zero results, since Scryfall's fuzzy-name
+endpoint isn't a general search and chokes on a combined name+set string -
+any extra signal has to arrive as its own field/query term, not extra words
+appended to the name.
 
 ## Web UI (`app/main.py`, `templates/`)
 
@@ -284,9 +296,30 @@ total.
 `ScryfallOffline`, so the collection page never claims a refresh happened when
 it didn't).
 
-## OCR
+## OCR (`scripts/scan.py`)
 
-OCR is a separate step from this app. The original `test_EasyOCR.py` /
-`test_API.py` spike scripts were removed (they were hand-run experiments, not
-tests). Phase 6 adds a `scan.py` that OCRs an image and queries this app's local
-API instead of calling Scryfall directly.
+OCR is a separate step from this app - `scripts/scan.py` reads a card photo
+and queries this app's own `/api/search`, never Scryfall directly, so it
+works the same whether or not this machine itself has a direct line to
+Scryfall (only the running app needs that). It replaces the original
+`test_EasyOCR.py` / `test_API.py` spike scripts (hand-run experiments, not
+tests, since removed).
+
+```bash
+python -m uvicorn app.main:app --reload      # in one terminal
+python -m scripts.scan path/to/photo.jpg     # in another
+python -m scripts.scan path/to/photo.jpg --open   # also opens the top match in a browser
+```
+
+Name extraction picks the highest-confidence OCR box in the top ~20% of the
+image (falling back to the single highest-confidence box anywhere), not just
+`results[0]` in EasyOCR's reading order, and strips a leading or trailing
+mana-cost cluster from it (`{2}{U} Brainstorm` -> `Brainstorm`). It also
+best-effort-scans every detected box for a `NNN/NNN` collector number and a
+short all-caps set code near it; when found, those are forwarded to
+`/api/search` to resolve the exact printing directly instead of a name-only
+guess (see "Ranking" above) - a low-confidence or absent match there just
+means no extra signal is sent, never a wrong result.
+
+`easyocr` (and its `torch` dependency) is only imported when `scan.py`
+actually runs, so nothing else in the app pays that cost.

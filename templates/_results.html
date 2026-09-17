@@ -1,7 +1,7 @@
 {% if offline %}
 <p class="offline-notice">You're offline - connect to wifi to look up new cards.</p>
 {% elif query and not results %}
-<p>No matches for "{{ query }}".</p>
+<p class="muted">No matches for "{{ query }}".</p>
 {% elif results %}
 <div class="card-grid">
   {% for c in results %}

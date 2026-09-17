@@ -132,6 +132,25 @@ class ScryfallClient:
             page += 1
         return results[:limit]
 
+    def get_card_by_set_number(self, set_code: str, collector_number: str) -> dict:
+        """Direct single-printing lookup - the precise route when OCR has read
+        both the set code and collector number off the card. Unlike a name
+        search, this can never be ambiguous across reprints."""
+        resp = self._request("GET", f"/cards/{set_code.lower()}/{collector_number}")
+        data = resp.json()
+        if resp.status_code != 200 or data.get("object") == "error":
+            raise ScryfallError(
+                f"get_card_by_set_number({set_code!r}, {collector_number!r}): "
+                f"{data.get('details', resp.text)}"
+            )
+        return data
+
+    def search_by_query(self, query: str, limit: int = 175) -> list[dict]:
+        """Raw Scryfall search query (e.g. 'set:cmr sol ring') - narrower than
+        a name-only fuzzy match when OCR has a set code but no collector
+        number. Reuses the same pagination as search_by_name."""
+        return self._search_all(query, limit)
+
     def get_cards_collection(self, ids: list[str]) -> list[dict]:
         """Batch-fetch cards by id, chunked at Scryfall's 75-id-per-call limit."""
         found: list[dict] = []
@@ -173,3 +192,11 @@ def search_by_name(text: str, limit: int = 175) -> list[dict]:
 
 def get_cards_collection(ids: list[str]) -> list[dict]:
     return _client().get_cards_collection(ids)
+
+
+def get_card_by_set_number(set_code: str, collector_number: str) -> dict:
+    return _client().get_card_by_set_number(set_code, collector_number)
+
+
+def search_by_query(query: str, limit: int = 175) -> list[dict]:
+    return _client().search_by_query(query, limit)

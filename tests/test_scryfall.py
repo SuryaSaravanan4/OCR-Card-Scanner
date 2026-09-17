@@ -139,6 +139,44 @@ def test_scryfall_offline_is_a_scryfall_error():
     assert issubclass(ScryfallOffline, ScryfallError)
 
 
+def test_get_card_by_set_number_success():
+    def handler(request):
+        assert request.url.path == "/cards/cmr/472"
+        return _json_response(200, _card(id="abc", set="cmr", collector_number="472"))
+
+    card = make_client(handler).get_card_by_set_number("cmr", "472")
+    assert card["id"] == "abc"
+
+
+def test_get_card_by_set_number_lowercases_set_code():
+    def handler(request):
+        assert request.url.path == "/cards/cmr/472"
+        return _json_response(200, _card(id="abc"))
+
+    make_client(handler).get_card_by_set_number("CMR", "472")
+
+
+def test_get_card_by_set_number_not_found_raises():
+    def handler(request):
+        return _json_response(404, {"object": "error", "details": "not found"})
+
+    with pytest.raises(ScryfallError):
+        make_client(handler).get_card_by_set_number("cmr", "999999")
+
+
+def test_search_by_query_passes_query_through():
+    def handler(request):
+        assert request.url.path == "/cards/search"
+        assert request.url.params["q"] == "set:cmr sol ring"
+        return _json_response(200, {
+            "object": "list", "has_more": False,
+            "data": [_card(id="p1"), _card(id="p2")],
+        })
+
+    results = make_client(handler).search_by_query("set:cmr sol ring")
+    assert [c["id"] for c in results] == ["p1", "p2"]
+
+
 def test_get_cards_collection_chunks_at_75(monkeypatch):
     monkeypatch.setattr("app.scryfall.time.sleep", lambda s: None)
     batches = []

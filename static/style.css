@@ -1,3 +1,35 @@
+/* Theme toggle */
+.theme-toggle {
+  width: auto;
+  margin: 0;
+  padding: 0.25rem 0.6rem;
+  line-height: 1.2;
+}
+
+/* Card-color-tinted background (card detail page) - each class only sets the
+   two shades; the actual `background` rule below picks light vs dark so the
+   light/dark toggle in base.html keeps working on top of it. */
+body.card-bg-w { --bg-light: #fbf8ee; --bg-dark: #2a2718; }
+body.card-bg-u { --bg-light: #e8f1fb; --bg-dark: #101f2e; }
+body.card-bg-b { --bg-light: #e9e6ec; --bg-dark: #1a1620; }
+body.card-bg-r { --bg-light: #fbebe8; --bg-dark: #2a1310; }
+body.card-bg-g { --bg-light: #eaf6ea; --bg-dark: #12261a; }
+body.card-bg-m { --bg-light: #faf3df; --bg-dark: #2a2211; }
+body.card-bg-c { --bg-light: #f2f2f2; --bg-dark: #1c1c1c; }
+
+body[class*="card-bg-"] {
+  background: var(--bg-light);
+  transition: background-color 0.3s ease;
+}
+html[data-theme="dark"] body[class*="card-bg-"] {
+  background: var(--bg-dark);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) body[class*="card-bg-"] {
+    background: var(--bg-dark);
+  }
+}
+
 /* Search results grid */
 .card-grid {
   display: grid;
@@ -47,24 +79,63 @@
 /* Card detail page */
 .card-detail {
   display: flex;
-  gap: 2rem;
+  gap: 1.5rem;
   flex-wrap: wrap;
-  margin-top: 1rem;
+  margin-top: 0.5rem;
 }
 .card-detail-image img {
-  max-width: 320px;
+  max-width: 260px;
   width: 100%;
   border-radius: var(--pico-border-radius);
+}
+.card-credit {
+  max-width: 260px;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  margin-top: 0.4rem;
+  text-align: center;
 }
 .card-detail-info {
   flex: 1 1 320px;
   min-width: 260px;
 }
+.card-detail-info h1 {
+  font-size: 1.6rem;
+  margin-bottom: 0.2rem;
+}
+.card-meta {
+  color: var(--pico-muted-color);
+  font-size: 0.8rem;
+  margin: 0.15rem 0;
+}
+.card-typeline {
+  font-size: 0.9rem;
+  margin: 0.15rem 0 0.5rem;
+}
+.card-pt {
+  font-weight: 600;
+  margin-left: 0.5rem;
+}
+.oracle-text {
+  white-space: pre-line;
+  border-top: 1px solid var(--pico-muted-border-color);
+  margin: 0 0 0.75rem;
+  padding-top: 0.5rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--pico-color);
+}
+.mana-symbol {
+  width: 0.85em;
+  height: 0.85em;
+  vertical-align: -0.1em;
+  margin: 0 0.05em;
+}
 .price-pills {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
-  margin: 0.75rem 0 1.25rem;
+  margin: 0.5rem 0 0.75rem;
 }
 .price-pill {
   background: var(--pico-card-background-color);
@@ -156,4 +227,7 @@
 
 table td, table th {
   vertical-align: middle;
+}
+table tbody tr:hover {
+  background: var(--pico-code-background-color);
 }

@@ -80,6 +80,74 @@ def test_empty_search_returns_empty_list(monkeypatch):
     assert service.search("gibberish") == []
 
 
+def test_search_with_set_and_collector_number_resolves_exact_printing(monkeypatch):
+    exact = _card("exact", "Sol Ring", set="cmr", collector_number="472")
+
+    def fake_direct(set_code, collector_number):
+        assert set_code == "cmr"
+        assert collector_number == "472"
+        return exact
+
+    monkeypatch.setattr(service.scryfall, "get_card_by_set_number", fake_direct)
+    monkeypatch.setattr(
+        service.scryfall, "search_by_name",
+        lambda text: (_ for _ in ()).throw(AssertionError("should not fall back")),
+    )
+
+    results = service.search("sol ring", set_code="cmr", collector_number="472")
+    assert [c["id"] for c in results] == ["exact"]
+
+
+def test_search_falls_back_to_name_when_set_number_not_found(monkeypatch):
+    def fake_direct(set_code, collector_number):
+        raise service.scryfall.ScryfallError("not found")
+
+    monkeypatch.setattr(service.scryfall, "get_card_by_set_number", fake_direct)
+    # collector number was misread, but the set code may still be good - the
+    # fallback stays narrowed to that set rather than dropping it entirely.
+    monkeypatch.setattr(
+        service.scryfall, "search_by_query", lambda query: [_card("fallback", "Sol Ring")]
+    )
+
+    results = service.search("sol ring", set_code="cmr", collector_number="999999")
+    assert [c["id"] for c in results] == ["fallback"]
+
+
+def test_search_with_set_and_collector_number_propagates_offline(monkeypatch):
+    def fake_direct(set_code, collector_number):
+        raise ScryfallOffline("no network")
+
+    monkeypatch.setattr(service.scryfall, "get_card_by_set_number", fake_direct)
+
+    with pytest.raises(ScryfallOffline):
+        service.search("sol ring", set_code="cmr", collector_number="472")
+
+
+def test_search_with_only_set_code_uses_narrowed_query(monkeypatch):
+    def fake_query(query):
+        assert query == "set:cmr sol ring"
+        return [_card("narrowed", "Sol Ring")]
+
+    monkeypatch.setattr(service.scryfall, "search_by_query", fake_query)
+    monkeypatch.setattr(
+        service.scryfall, "search_by_name",
+        lambda text: (_ for _ in ()).throw(AssertionError("should not fall back")),
+    )
+
+    results = service.search("sol ring", set_code="cmr")
+    assert [c["id"] for c in results] == ["narrowed"]
+
+
+def test_search_with_only_set_code_falls_back_when_narrowed_query_empty(monkeypatch):
+    monkeypatch.setattr(service.scryfall, "search_by_query", lambda query: [])
+    monkeypatch.setattr(
+        service.scryfall, "search_by_name", lambda text: [_card("fallback", "Sol Ring")]
+    )
+
+    results = service.search("sol ring", set_code="cmr")
+    assert [c["id"] for c in results] == ["fallback"]
+
+
 # --------------------------------------------------------------------------- #
 # get_card: the cache-aside read
 # --------------------------------------------------------------------------- #

@@ -58,7 +58,43 @@ def upsert_card(data: dict) -> None:
         conn.execute(sql, row)
 
 
+def _derived_fields(raw_json: str) -> dict:
+    """Pull display fields that aren't worth a schema column out of the raw
+    Scryfall payload we already store - power/toughness/loyalty, artist,
+    and the card's Scryfall page. Falls back to the first face for
+    double-faced cards, same as `_row_from_scryfall` does for image_uri.
+    """
+    try:
+        raw = json.loads(raw_json)
+    except (TypeError, ValueError):
+        raw = {}
+    face = raw
+    if not any(k in raw for k in ("power", "toughness", "loyalty")) and raw.get("card_faces"):
+        face = raw["card_faces"][0]
+
+    colors = raw.get("colors")
+    if colors is None and raw.get("card_faces"):
+        # split cards/MDFCs often carry colors per-face instead of on the card itself
+        combined: list[str] = []
+        for face_data in raw["card_faces"]:
+            combined.extend(face_data.get("colors") or [])
+        colors = sorted(set(combined))
+
+    return {
+        "power": face.get("power"),
+        "toughness": face.get("toughness"),
+        "loyalty": face.get("loyalty"),
+        "artist": raw.get("artist") or face.get("artist"),
+        "scryfall_uri": raw.get("scryfall_uri"),
+        "colors": colors or [],
+    }
+
+
 def get_card(card_id: str) -> dict | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    card = dict(row)
+    card.update(_derived_fields(card["raw_json"]))
+    return card

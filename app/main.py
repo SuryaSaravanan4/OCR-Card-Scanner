@@ -9,6 +9,7 @@ notice instead of a generic error page.
 """
 from __future__ import annotations
 
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -16,9 +17,81 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
 from . import config, db, service, store
 from .scryfall import ScryfallOffline
+
+MANA_SYMBOL_RE = re.compile(r"\{([^{}]+)\}")
+REMINDER_TEXT_RE = re.compile(r"\s*\([^()]*\)")
+
+
+def strip_reminder_text(text: str | None) -> str | None:
+    """Drop Magic's parenthetical reminder text - it restates what the ability
+    already says, so it's redundant once you know the rules."""
+    return REMINDER_TEXT_RE.sub("", text) if text else text
+
+
+RARITY_LETTERS = {
+    "common": "C",
+    "uncommon": "U",
+    "rare": "R",
+    "mythic": "M",
+    "special": "S",
+    "bonus": "B",
+}
+
+
+def rarity_letter(rarity: str | None) -> str:
+    if not rarity:
+        return ""
+    return RARITY_LETTERS.get(rarity.lower(), rarity[:1].upper())
+
+
+def pad_collector_number(number: str | None) -> str:
+    """Match the 4-digit zero-padded collector number printed on the card
+    itself (e.g. "205" -> "0205"); non-numeric collector numbers (promos,
+    special suffixes) are left as-is."""
+    if not number:
+        return ""
+    return number.zfill(4) if number.isdigit() else number
+
+
+def color_class(colors: list[str] | None) -> str:
+    """Bucket a card's color list into one of the CSS background classes:
+    a single WUBRG letter, "m" for multicolor, or "c" for colorless."""
+    if not colors:
+        return "c"
+    if len(colors) > 1:
+        return "m"
+    return colors[0].lower()
+
+
+def mana_symbols(text: str | None) -> Markup:
+    """Render {T}/{1}/{W/U}-style mana cost tokens as Scryfall's icon SVGs.
+
+    Scryfall's CDN names each icon by the symbol with braces and the "/"
+    (in hybrid/Phyrexian symbols like {W/U}) stripped - e.g. {T} -> T.svg,
+    {W/U} -> WU.svg. Verified against Scryfall's /symbology endpoint.
+    """
+    if not text:
+        return Markup("")
+    pieces: list[str | Markup] = []
+    last = 0
+    for match in MANA_SYMBOL_RE.finditer(text):
+        pieces.append(text[last : match.start()])  # plain str - Markup.join escapes it below
+        token = match.group(1)
+        filename = escape(token.replace("/", ""))
+        label = escape(match.group(0))
+        pieces.append(
+            Markup(
+                f'<img class="mana-symbol" src="https://svgs.scryfall.io/card-symbols/{filename}.svg" '
+                f'alt="{label}" title="{label}">'
+            )
+        )
+        last = match.end()
+    pieces.append(text[last:])
+    return Markup("").join(pieces)
 
 
 @asynccontextmanager
@@ -30,6 +103,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(config.BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(config.BASE_DIR / "templates"))
+templates.env.filters["mana_symbols"] = mana_symbols
+templates.env.filters["strip_reminder_text"] = strip_reminder_text
+templates.env.filters["rarity_letter"] = rarity_letter
+templates.env.filters["pad_collector_number"] = pad_collector_number
+templates.env.filters["color_class"] = color_class
+# Cache-bust /static/style.css by its mtime, so an edit is picked up on the
+# next request instead of serving whatever the browser cached previously.
+templates.env.globals["static_version"] = int(
+    (config.BASE_DIR / "static" / "style.css").stat().st_mtime
+)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -136,10 +219,14 @@ def refresh_prices_route(request: Request):
 
 
 @app.get("/api/search")
-def api_search(q: str = ""):
+def api_search(q: str = "", set_code: str = "", collector_number: str = ""):
     if not q.strip():
         return []
     try:
-        return service.search(q)
+        return service.search(
+            q,
+            set_code=set_code.strip() or None,
+            collector_number=collector_number.strip() or None,
+        )
     except ScryfallOffline:
         return JSONResponse({"error": "offline"}, status_code=503)
