@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Scan</h1>
+<div id="scan-panel" hx-get="/scan" hx-trigger="every 2s" hx-swap="innerHTML">
+  {% include "_scan.html" %}
+</div>
+{% endblock %}

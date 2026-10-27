@@ -17,9 +17,10 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from markupsafe import Markup, escape
 
-from . import config, db, service, store
+from . import config, db, scans, service, store
 from .scryfall import ScryfallOffline
 
 MANA_SYMBOL_RE = re.compile(r"\{([^{}]+)\}")
@@ -220,3 +221,34 @@ def api_search(q: str = "", set_code: str = "", collector_number: str = ""):
         )
     except ScryfallOffline:
         return JSONResponse({"error": "offline"}, status_code=503)
+
+
+class ScanPayload(BaseModel):
+    """What the Raspberry Pi sends after OCR: EasyOCR's detections, each
+    {text, confidence, box?}. `box` (four [x, y] corners) is needed to read the
+    set code + collector number; without it only the title is used."""
+
+    type: str = "card_scan"
+    detections: list[dict]
+    elapsed_seconds: float | None = None
+
+
+@app.post("/api/scan")
+def api_scan(payload: ScanPayload):
+    scan = scans.record(
+        payload.detections,
+        payload.elapsed_seconds,
+        lambda text=None, **kw: service.search(text or "", **kw),
+    )
+    return {
+        "id": scan["id"],
+        "exact": scan["exact"],
+        "offline": scan["offline"],
+        "candidates": len(scan["candidates"]),
+    }
+
+
+@app.get("/scan", response_class=HTMLResponse)
+def scan_page(request: Request):
+    template = "_scan.html" if request.headers.get("HX-Request") else "scan.html"
+    return templates.TemplateResponse(request, template, {"scan": scans.latest()})

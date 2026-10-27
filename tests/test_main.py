@@ -220,3 +220,83 @@ def test_api_search_passes_set_and_collector_number(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()[0]["id"] == "exact"
+
+
+@pytest.fixture()
+def clean_scans():
+    from app import scans
+
+    scans.clear()
+    yield
+    scans.clear()
+
+
+def _det(text, x0, y0, x1, y1, confidence=0.9):
+    return {"text": text, "confidence": confidence, "box": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]}
+
+
+def test_scan_page_waits_when_nothing_scanned(client, clean_scans):
+    resp = client.get("/scan")
+    assert resp.status_code == 200
+    assert "Waiting for a scan" in resp.text
+
+
+def test_api_scan_exact_footer_match_shows_on_scan_page(client, clean_scans, monkeypatch):
+    calls = []
+
+    def fake_search(text, limit=10, set_code=None, collector_number=None):
+        calls.append((text, set_code, collector_number))
+        return [{"id": "abc", "name": "Sol Ring", "set_name": "Commander Legends",
+                 "set_code": "cmr", "collector_number": "472", "rarity": "uncommon",
+                 "image_uri": None, "price_usd": "1.00"}]
+
+    monkeypatch.setattr(service, "search", fake_search)
+    payload = {
+        "type": "card_scan",
+        "detections": [
+            _det("Sol Ring", 10, 20, 300, 60),
+            _det("CMR", 10, 960, 80, 975),
+            _det("472/361", 90, 960, 160, 975),
+        ],
+        "elapsed_seconds": 12.3,
+    }
+    resp = client.post("/api/scan", json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["exact"] is True
+    assert calls == [("", "cmr", "472")]
+
+    page = client.get("/scan", headers={"HX-Request": "true"})
+    assert "Sol Ring" in page.text
+    assert "exact match" in page.text
+    assert "<nav" not in page.text
+
+
+def test_api_scan_without_boxes_falls_back_to_title(client, clean_scans, monkeypatch):
+    calls = []
+
+    def fake_search(text, limit=10, set_code=None, collector_number=None):
+        calls.append((text, set_code, collector_number))
+        return [{"id": "abc", "name": "Sol Ring", "set_name": "X", "set_code": "cmr",
+                 "collector_number": "1", "rarity": "common", "image_uri": None,
+                 "price_usd": None}]
+
+    monkeypatch.setattr(service, "search", fake_search)
+    resp = client.post(
+        "/api/scan",
+        json={"detections": [{"text": "Sol Ring", "confidence": 0.9},
+                             {"text": "CMR", "confidence": 0.9}]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["exact"] is False
+    assert calls == [("Sol Ring", None, None)]
+
+
+def test_api_scan_offline_shows_notice(client, clean_scans, monkeypatch):
+    def offline(*a, **k):
+        raise ScryfallOffline("no network")
+
+    monkeypatch.setattr(service, "search", offline)
+    resp = client.post("/api/scan", json={"detections": [_det("Sol Ring", 10, 20, 300, 60)]})
+    assert resp.status_code == 200
+    assert resp.json()["offline"] is True
+    assert "offline" in client.get("/scan").text
