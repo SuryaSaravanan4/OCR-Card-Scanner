@@ -302,6 +302,24 @@ def test_api_scan_offline_shows_notice(client, clean_scans, monkeypatch):
     assert "offline" in client.get("/scan").text
 
 
+def test_api_scan_scryfall_error_is_flagged_not_a_500(client, clean_scans, monkeypatch):
+    """A Scryfall API failure that is NOT 'offline' (e.g. 429/503 after retries)
+    must not crash the scan: it is reported as 'couldn't identify', not offline."""
+    from app.scryfall import ScryfallError
+
+    def broken(*a, **k):
+        raise ScryfallError("GET /cards/named failed after 3 retries")
+
+    monkeypatch.setattr(service, "search", broken)
+    resp = client.post("/api/scan", json={"detections": [_det("Sol Ring", 10, 20, 300, 60)]})
+    assert resp.status_code == 200
+    assert resp.json()["offline"] is False
+    assert resp.json()["candidates"] == 0
+    page = client.get("/scan").text
+    assert "couldn't identify" in page
+    assert "You're offline" not in page
+
+
 # --- collection sorting -----------------------------------------------------
 
 

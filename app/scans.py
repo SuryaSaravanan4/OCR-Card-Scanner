@@ -22,7 +22,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Callable
 
-from .scryfall import ScryfallOffline
+from .scryfall import ScryfallError, ScryfallOffline
 
 _LEADING_MANA = re.compile(r"^\s*(\{[^}]*\}|\d+)+\s*")
 _TRAILING_NOISE = re.compile(r"[\d\{\}].*$")
@@ -235,7 +235,10 @@ def record(detections: list[dict], elapsed_seconds: float | None, search: Callab
     try:
         result = identify(boxes, search, detections)
         offline = False
-    except ScryfallOffline:
+    except ScryfallError as exc:
+        # ScryfallOffline is a ScryfallError subclass. Either way the scan must not
+        # crash the Pi's POST: offline shows "you're offline", any other API failure
+        # (429/503 after retries) shows "couldn't identify a card".
         result = {
             "candidates": [],
             "exact": False,
@@ -243,7 +246,7 @@ def record(detections: list[dict], elapsed_seconds: float | None, search: Callab
             "set_code": None,
             "collector_number": None,
         }
-        offline = True
+        offline = isinstance(exc, ScryfallOffline)
     with _lock:
         _counter += 1
         _latest = {
