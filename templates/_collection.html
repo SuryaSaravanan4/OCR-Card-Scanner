@@ -1,3 +1,12 @@
+{% macro sort_th(key, label) %}
+{%- set active = (sort == key) -%}
+{%- set next_dir = "desc" if (active and direction == "asc") else "asc" -%}
+<th aria-sort="{{ ('ascending' if direction == 'asc' else 'descending') if active else 'none' }}">
+  <a class="sort-link{{ ' active' if active }}" href="/collection?sort={{ key }}&dir={{ next_dir }}"
+     hx-get="/collection?sort={{ key }}&dir={{ next_dir }}" hx-target="#collection" hx-swap="innerHTML"
+     hx-push-url="true">{{ label }}{% if active %} {{ "&#9650;"|safe if direction == "asc" else "&#9660;"|safe }}{% endif %}</a>
+</th>
+{%- endmacro %}
 {% if refreshed is not none %}
 <p class="flash">Refreshed {{ refreshed }} price{{ "s" if refreshed != 1 else "" }}.</p>
 {% endif %}
@@ -23,8 +32,13 @@
   {% endif %}
 </div>
 
+<div id="sort-state">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="dir" value="{{ direction }}">
+</div>
+
 <div class="toolbar">
-  <button hx-post="/refresh-prices" hx-target="#collection" hx-swap="innerHTML">Refresh prices</button>
+  <button hx-post="/refresh-prices" hx-include="#sort-state" hx-target="#collection" hx-swap="innerHTML">Refresh prices</button>
   {% if last_refresh_at %}
   <small class="muted">Last refreshed {{ last_refresh_at }}</small>
   {% endif %}
@@ -36,8 +50,8 @@
 <table>
   <thead>
     <tr>
-      <th>Card</th><th>Set</th><th>Finish</th><th>Condition</th>
-      <th>Qty</th><th>Unit</th><th>Value</th><th></th>
+      {{ sort_th("name", "Card") }}<th>Set</th>{{ sort_th("rarity", "Rarity") }}<th>Finish</th><th>Condition</th>
+      <th>Qty</th>{{ sort_th("price", "Unit") }}<th>Value</th><th></th>
     </tr>
   </thead>
   <tbody>
@@ -45,6 +59,7 @@
     <tr>
       <td><a href="/cards/{{ row.card_id }}">{{ row.name }}</a></td>
       <td>{{ (row.set_code or "")|upper }} #{{ row.collector_number }}</td>
+      <td>{{ (row.rarity or "")|capitalize }}</td>
       <td>{{ row.finish }}</td>
       <td>{{ row.condition }}</td>
       <td>
@@ -52,13 +67,13 @@
           <button type="button" class="outline"
                   hx-post="/collection/{{ row.id }}"
                   hx-vals='{"quantity": {{ row.quantity - 1 }}}'
-                  hx-target="#collection" hx-swap="innerHTML"
+                  hx-include="#sort-state" hx-target="#collection" hx-swap="innerHTML"
                   {% if row.quantity <= 1 %}disabled{% endif %}>-</button>
           <span class="qty-value">{{ row.quantity }}</span>
           <button type="button" class="outline"
                   hx-post="/collection/{{ row.id }}"
                   hx-vals='{"quantity": {{ row.quantity + 1 }}}'
-                  hx-target="#collection" hx-swap="innerHTML">+</button>
+                  hx-include="#sort-state" hx-target="#collection" hx-swap="innerHTML">+</button>
         </div>
       </td>
       <td>{{ "$%.2f"|format(row.unit_price) if row.unit_price is not none else "n/a" }}</td>
@@ -67,7 +82,7 @@
         <button type="button" class="secondary outline"
                 hx-post="/collection/{{ row.id }}/delete"
                 hx-confirm="Remove {{ row.quantity }}x {{ row.name }} ({{ row.finish }}) from your collection?"
-                hx-target="#collection" hx-swap="innerHTML">Remove</button>
+                hx-include="#sort-state" hx-target="#collection" hx-swap="innerHTML">Remove</button>
       </td>
     </tr>
     {% endfor %}

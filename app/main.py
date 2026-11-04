@@ -13,7 +13,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -141,12 +141,20 @@ def _format_last_refresh(iso: str | None) -> str | None:
     return datetime.fromisoformat(iso).strftime("%b %d, %Y %H:%M UTC")
 
 
-def _collection_context(refreshed: int | None = None) -> dict:
+def _clean_sort(sort: str, direction: str) -> tuple[str, str]:
+    """Only accept known sort keys / directions; anything else means the default."""
+    return (sort if sort in store.SORT_KEYS else "name", "desc" if direction == "desc" else "asc")
+
+
+def _collection_context(
+    refreshed: int | None = None, sort: str = "name", direction: str = "asc"
+) -> dict:
     """Shared context for both the full collection page and its HTMX fragment,
     so a mutation (quantity change, delete, refresh) always re-renders the
     whole panel - stats and total stay correct, never one render behind."""
+    sort, direction = _clean_sort(sort, direction)
     data = store.list_collection()
-    rows = data["rows"]
+    rows = store.sort_rows(data["rows"], sort, direction)
     stats = {
         "card_count": len(rows),
         "total_quantity": sum(row["quantity"] for row in rows),
@@ -158,19 +166,28 @@ def _collection_context(refreshed: int | None = None) -> dict:
         "stats": stats,
         "refreshed": refreshed,
         "last_refresh_at": _format_last_refresh(store.get_meta("last_refresh_at")),
+        "sort": sort,
+        "direction": direction,
     }
 
 
-def _render_collection(request: Request, refreshed: int | None = None) -> HTMLResponse:
+def _render_collection(
+    request: Request, refreshed: int | None = None, sort: str = "name", direction: str = "asc"
+) -> HTMLResponse:
     """Fragment-or-full-page response, same pattern as `/search`."""
-    context = _collection_context(refreshed)
+    context = _collection_context(refreshed, sort, direction)
     template = "_collection.html" if request.headers.get("HX-Request") else "collection.html"
     return templates.TemplateResponse(request, template, context)
 
 
 @app.get("/collection", response_class=HTMLResponse)
-def collection_page(request: Request, refreshed: int | None = None):
-    return _render_collection(request, refreshed=refreshed)
+def collection_page(
+    request: Request,
+    refreshed: int | None = None,
+    sort: str = "name",
+    direction: str = Query("asc", alias="dir"),
+):
+    return _render_collection(request, refreshed=refreshed, sort=sort, direction=direction)
 
 
 @app.post("/collection")
@@ -185,26 +202,42 @@ def add_owned_route(
 
 
 @app.post("/collection/{collection_id}", response_class=HTMLResponse)
-def update_quantity_route(request: Request, collection_id: int, quantity: int = Form(...)):
+def update_quantity_route(
+    request: Request,
+    collection_id: int,
+    quantity: int = Form(...),
+    sort: str = Form("name"),
+    direction: str = Form("asc", alias="dir"),
+):
+    # sort/dir ride along from the page's hidden fields so the order survives a +/- click.
     store.set_quantity(collection_id, quantity)
     if request.headers.get("HX-Request"):
-        return _render_collection(request)
+        return _render_collection(request, sort=sort, direction=direction)
     return RedirectResponse(url="/collection", status_code=303)
 
 
 @app.post("/collection/{collection_id}/delete", response_class=HTMLResponse)
-def delete_collection_row_route(request: Request, collection_id: int):
+def delete_collection_row_route(
+    request: Request,
+    collection_id: int,
+    sort: str = Form("name"),
+    direction: str = Form("asc", alias="dir"),
+):
     store.remove_from_collection(collection_id)
     if request.headers.get("HX-Request"):
-        return _render_collection(request)
+        return _render_collection(request, sort=sort, direction=direction)
     return RedirectResponse(url="/collection", status_code=303)
 
 
 @app.post("/refresh-prices", response_class=HTMLResponse)
-def refresh_prices_route(request: Request):
+def refresh_prices_route(
+    request: Request,
+    sort: str = Form("name"),
+    direction: str = Form("asc", alias="dir"),
+):
     refreshed = service.refresh_prices()
     if request.headers.get("HX-Request"):
-        return _render_collection(request, refreshed=refreshed)
+        return _render_collection(request, refreshed=refreshed, sort=sort, direction=direction)
     return RedirectResponse(url=f"/collection?refreshed={refreshed}", status_code=303)
 
 

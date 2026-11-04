@@ -300,3 +300,79 @@ def test_api_scan_offline_shows_notice(client, clean_scans, monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["offline"] is True
     assert "offline" in client.get("/scan").text
+
+
+# --- collection sorting -----------------------------------------------------
+
+
+def _seed_sorted(monkeypatch):
+    """Four cards: differing rarity and price, one with no price at all."""
+    cards = {
+        "a": _card("a", "Banana", rarity="rare", prices={"usd": "9.00"}),
+        "b": _card("b", "apple", rarity="common", prices={"usd": "10.00"}),
+        "c": _card("c", "Cherry", rarity="mythic", prices={"usd": None}),
+        "d": _card("d", "Date", rarity="uncommon", prices={"usd": "2.50"}),
+    }
+    monkeypatch.setattr(service.scryfall, "get_card", lambda cid: cards[cid])
+    for cid in cards:
+        service.add_owned(cid)
+
+
+def _order(html: str, names: list[str]) -> list[str]:
+    return sorted(names, key=html.index)
+
+
+def test_collection_default_is_name_order_case_insensitive(client, monkeypatch):
+    _seed_sorted(monkeypatch)
+    html = client.get("/collection").text
+    assert _order(html, ["apple", "Banana", "Cherry", "Date"]) == ["apple", "Banana", "Cherry", "Date"]
+
+
+def test_collection_sort_by_price_is_numeric_and_unknown_last(client, monkeypatch):
+    _seed_sorted(monkeypatch)
+    names = ["apple", "Banana", "Cherry", "Date"]
+    asc = client.get("/collection?sort=price&dir=asc").text
+    # 2.50 < 9.00 < 10.00 (as text "10.00" would sort before "2.50"); no-price Cherry last
+    assert _order(asc, names) == ["Date", "Banana", "apple", "Cherry"]
+    desc = client.get("/collection?sort=price&dir=desc").text
+    assert _order(desc, names) == ["apple", "Banana", "Date", "Cherry"]  # unknown still last
+
+
+def test_collection_sort_by_rarity_uses_scarcity_not_alphabet(client, monkeypatch):
+    _seed_sorted(monkeypatch)
+    names = ["apple", "Banana", "Cherry", "Date"]
+    asc = client.get("/collection?sort=rarity&dir=asc").text
+    assert _order(asc, names) == ["apple", "Date", "Banana", "Cherry"]  # common<uncommon<rare<mythic
+    desc = client.get("/collection?sort=rarity&dir=desc").text
+    assert _order(desc, names) == ["Cherry", "Banana", "Date", "apple"]
+
+
+def test_collection_bad_sort_params_fall_back_to_name(client, monkeypatch):
+    _seed_sorted(monkeypatch)
+    resp = client.get("/collection?sort=bogus&dir=sideways")
+    assert resp.status_code == 200
+    assert _order(resp.text, ["apple", "Banana"]) == ["apple", "Banana"]
+
+
+def test_sort_survives_quantity_click(client, monkeypatch):
+    _seed_sorted(monkeypatch)
+    row = next(r for r in store_rows() if r["card_id"] == "a")
+    resp = client.post(
+        f"/collection/{row['id']}",
+        data={"quantity": "2", "sort": "price", "dir": "desc"},
+        headers={"HX-Request": "true"},
+    )
+    assert _order(resp.text, ["apple", "Banana", "Cherry", "Date"]) == ["apple", "Banana", "Date", "Cherry"]
+
+
+def test_sort_headers_render_as_links(client, monkeypatch):
+    _seed_sorted(monkeypatch)
+    html = client.get("/collection?sort=price&dir=asc").text
+    assert 'hx-get="/collection?sort=price&dir=desc"' in html  # active column toggles direction
+    assert "sort=rarity&dir=asc" in html and "sort=name&dir=asc" in html
+
+
+def store_rows():
+    from app import store
+
+    return store.list_collection()["rows"]
