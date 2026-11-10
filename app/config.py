@@ -1,8 +1,4 @@
-"""Central configuration knobs.
-
-Phase 1 only needs the paths and the price TTL. The Scryfall settings are here
-now so the client added in Phase 2 has one place to read from.
-"""
+"""Central configuration knobs."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,9 +10,10 @@ DB_PATH = DATA_DIR / "cards.db"
 # Refetch a card's price if the stored copy is older than this many days.
 PRICE_TTL_DAYS = 7
 
-# --- Scryfall (used from Phase 2 onward; unused in Phase 1) ---
+# --- Scryfall client (app/scryfall.py) ---
 SCRYFALL_BASE = "https://api.scryfall.com"
-# Scryfall asks every client to send an identifying User-Agent with a contact.
-USER_AGENT = "OCR-Card-Scanner/0.1 (contact: you@example.com)"
+# Scryfall asks every client to send a descriptive, identifying User-Agent.
+# No personal contact info required - name + version is enough.
+USER_AGENT = "OCR-Card-Scanner/0.1"
 # Minimum seconds between Scryfall requests (their guidance is 50-100ms).
 SCRYFALL_MIN_INTERVAL = 0.1

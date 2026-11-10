@@ -1,6 +1,20 @@
-# Only what this project actually uses right now.
-# The app code is pure standard library so far, so this is just the test tool.
-# Later phases add their own deps (see ROADMAP.md):
-#   Phase 2+  fastapi  uvicorn[standard]  jinja2  httpx  rapidfuzz  python-multipart
+# pytest             - test suite
+# httpx              - Scryfall API client (app/scryfall.py), also used by scripts/scan.py
+#                      to call this app's own /api/search
+# rapidfuzz          - name-similarity ranking (app/service.py)
+# fastapi            - web app (app/main.py)
+# uvicorn[standard]  - ASGI server to run the app
+# jinja2             - server-rendered templates
+# python-multipart   - HTML form parsing (collection add/update/delete)
+# easyocr            - scripts/scan.py's OCR step. Heavy (pulls in torch) and
+#                      only imported when scan.py actually runs - nothing
+#                      else in the app depends on it.
 
 pytest
+httpx
+rapidfuzz
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+easyocr

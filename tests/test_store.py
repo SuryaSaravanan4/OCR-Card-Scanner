@@ -8,16 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import config, store
-from app.db import init_db
-
-
-@pytest.fixture()
-def db(tmp_path, monkeypatch):
-    """Point the app at a throwaway SQLite file for each test."""
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.db")
-    init_db()
-    yield
+from app import store
 
 
 def make_card(card_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name="Sol Ring", **overrides):
@@ -167,3 +158,11 @@ def test_stale_card_ids_only_collection(db):
 
     stale = store.stale_card_ids(ttl_days=7, only_collection=True)
     assert stale == [owned["id"]]
+
+
+def test_meta_round_trip_and_overwrite(db):
+    assert store.get_meta("last_refresh_at") is None
+    store.set_meta("last_refresh_at", "2026-01-01T00:00:00+00:00")
+    assert store.get_meta("last_refresh_at") == "2026-01-01T00:00:00+00:00"
+    store.set_meta("last_refresh_at", "2026-02-01T00:00:00+00:00")
+    assert store.get_meta("last_refresh_at") == "2026-02-01T00:00:00+00:00"

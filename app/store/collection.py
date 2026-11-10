@@ -69,6 +69,47 @@ def remove_from_collection(collection_id: int) -> None:
         conn.execute("DELETE FROM collection WHERE id = ?", (collection_id,))
 
 
+SORT_KEYS = ("name", "rarity", "price")
+# Rarity is ordered by how scarce it is, not alphabetically ("mythic" < "rare" alphabetically).
+RARITY_RANK = {"common": 0, "uncommon": 1, "rare": 2, "mythic": 3, "special": 4, "bonus": 5}
+
+
+def sort_rows(rows: list[dict], sort: str = "name", direction: str = "asc") -> list[dict]:
+    """Return `rows` ordered by name, rarity (scarcity) or unit price.
+
+    Price is compared as a number (`unit_price` is already a float), never as
+    text, so $10.00 sorts after $9.00. Rows with no known price (None) and rows
+    with an unrecognised rarity always sort LAST in either direction, so unknowns
+    never crowd the top of the list. Ties fall back to name, then finish, so the
+    order is stable and predictable. Unknown `sort`/`direction` values fall back
+    to name / asc.
+    """
+    if sort not in SORT_KEYS:
+        sort = "name"
+    reverse = direction == "desc"
+
+    def tiebreak(r: dict):
+        return ((r.get("name") or "").lower(), r.get("finish") or "")
+
+    def value(r: dict):
+        if sort == "price":
+            return r.get("unit_price")
+        if sort == "rarity":
+            return RARITY_RANK.get((r.get("rarity") or "").lower())
+        return (r.get("name") or "").lower()
+
+    known = [r for r in rows if value(r) is not None]
+    unknown = [r for r in rows if value(r) is None]
+    if sort == "name":
+        known.sort(key=lambda r: (value(r), r.get("finish") or ""), reverse=reverse)
+    else:
+        # Tie-break by name ascending in both directions: reverse only the main key.
+        known.sort(key=tiebreak)
+        known.sort(key=value, reverse=reverse)
+    unknown.sort(key=tiebreak)
+    return known + unknown
+
+
 def list_collection() -> dict:
     """Return every owned row joined with card + price data, plus a grand total.
 
