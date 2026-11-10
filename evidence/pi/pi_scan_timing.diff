@@ -1,0 +1,160 @@
+--- pi_scan.py (as pasted)
++++ pi_scan_timed.py
+@@ -5,4 +5,7 @@
+ import json
+ import urllib.request
++import csv
++import os
++from datetime import datetime
+ 
+ 
+@@ -18,4 +21,52 @@
+ # PC receiver settings (home Ethernet connection)
+ PC_URL = "http://192.168.137.1:8000/api/scan"
++
++# --- TIMING (added for Test 2.4): one CSV row per scanned card -------------
++TIMING_LOG = "/home/pi-model-b/scan_timing.csv"
++TIMING_FIELDS = [
++    "card_no", "time", "human_wait_s", "capture_s", "load_crop_s", "ocr_s",
++    "post_s", "total_s", "detections", "mem_avail_mb", "swap_used_mb",
++]
++
++
++def mem_status():
++    """(MemAvailable MB, swap used MB) from /proc/meminfo; (None, None) if unreadable."""
++    try:
++        info = {}
++        with open("/proc/meminfo") as f:
++            for line in f:
++                key, value = line.split(":", 1)
++                info[key] = int(value.split()[0])
++        return info["MemAvailable"] / 1024, (info["SwapTotal"] - info["SwapFree"]) / 1024
++    except (OSError, KeyError, ValueError):
++        return None, None
++
++
++def log_timing_row(row):
++    new_file = not os.path.exists(TIMING_LOG)
++    with open(TIMING_LOG, "a", newline="") as f:
++        writer = csv.DictWriter(f, fieldnames=TIMING_FIELDS)
++        if new_file:
++            writer.writeheader()
++        writer.writerow(row)
++
++
++def print_timing_summary(rows):
++    n = len(rows)
++    if n == 0:
++        return
++    avg = lambda key: sum(r[key] for r in rows) / n
++    busy = sum(r["total_s"] for r in rows)
++    waits = sum(r["human_wait_s"] for r in rows if r["human_wait_s"] is not None)
++    print("\n===== TIMING SUMMARY =====")
++    print(f"cards scanned          : {n}")
++    print(f"avg capture            : {avg('capture_s'):.2f} s")
++    print(f"avg load+crop          : {avg('load_crop_s'):.2f} s")
++    print(f"avg OCR (readtext)     : {avg('ocr_s'):.2f} s")
++    print(f"avg POST to PC         : {avg('post_s'):.2f} s")
++    print(f"avg total per card     : {avg('total_s'):.2f} s  (Enter pressed -> PC replied)")
++    print(f"cards/min, processing only        : {n / (busy / 60):.2f}")
++    print(f"cards/min, incl. time between cards: {n / ((busy + waits) / 60):.2f}")
++    print(f"log file: {TIMING_LOG}")
+ 
+ 
+@@ -48,5 +99,6 @@
+ 
+ 
+-def scan_card(reader, image_path=IMAGE_PATH):
++def scan_card(reader, image_path=IMAGE_PATH, timings=None):
++    t_load = time.perf_counter()
+     image = cv2.imread(image_path)
+ 
+@@ -70,10 +122,16 @@
+ 
+     cv2.imwrite(CROP_PATH, name_crop)
++    if timings is not None:
++        timings["load_crop_s"] = time.perf_counter() - t_load
+ 
+     print(f"Running OCR on crop: {name_crop.shape[1]}x{name_crop.shape[0]}")
+ 
+-    start = time.time()
++    # Memory/swap just before OCR is the number that shows whether the Pi is swapping.
++    if timings is not None:
++        timings["mem_avail_mb"], timings["swap_used_mb"] = mem_status()
++
++    start = time.perf_counter()
+     result = reader.readtext(name_crop)
+-    elapsed = time.time() - start
++    elapsed = time.perf_counter() - start  # same meaning as before: OCR only
+ 
+     detections = []
+@@ -93,7 +151,11 @@
+ 
+ if __name__ == "__main__":
++    t_model = time.perf_counter()
+     print("Loading OCR model once...")
+     reader = easyocr.Reader(["en"])
+-    print("OCR ready.")
++    print(f"OCR ready. (model load took {time.perf_counter() - t_model:.1f} s, paid once)")
++
++    timing_rows = []
++    last_done = None
+ 
+     while True:
+@@ -105,7 +167,12 @@
+         if command == "q":
+             print("Exiting.")
++            print_timing_summary(timing_rows)
+             break
+ 
++        t_enter = time.perf_counter()
++        human_wait = (t_enter - last_done) if last_done is not None else None
++
+         try:
++            t_cap = time.perf_counter()
+             subprocess.run(
+             [
+@@ -120,6 +187,8 @@
+             check=True,
+             )
+-
+-            scan = scan_card(reader)
++            capture_s = time.perf_counter() - t_cap
++
++            timings = {}
++            scan = scan_card(reader, timings=timings)
+ 
+             print(f"OCR time: {scan['elapsed_seconds']:.2f} seconds")
+@@ -134,5 +203,32 @@
+                 print("No text detected.")
+ 
++            t_post = time.perf_counter()
+             send_scan_result(scan)
++            post_s = time.perf_counter() - t_post
++
++            total_s = time.perf_counter() - t_enter
++            last_done = time.perf_counter()
++
++            row = {
++                "card_no": len(timing_rows) + 1,
++                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
++                "human_wait_s": None if human_wait is None else round(human_wait, 2),
++                "capture_s": round(capture_s, 2),
++                "load_crop_s": round(timings["load_crop_s"], 2),
++                "ocr_s": round(scan["elapsed_seconds"], 2),
++                "post_s": round(post_s, 2),
++                "total_s": round(total_s, 2),
++                "detections": len(scan["detections"]),
++                "mem_avail_mb": None if timings["mem_avail_mb"] is None else round(timings["mem_avail_mb"]),
++                "swap_used_mb": None if timings["swap_used_mb"] is None else round(timings["swap_used_mb"]),
++            }
++            timing_rows.append(row)
++            log_timing_row(row)
++            print(
++                f"[timing] card {row['card_no']}: capture {row['capture_s']}s | "
++                f"load+crop {row['load_crop_s']}s | OCR {row['ocr_s']}s | "
++                f"POST {row['post_s']}s | TOTAL {row['total_s']}s | "
++                f"swap used {row['swap_used_mb']} MB"
++            )
+ 
+         except (FileNotFoundError, ValueError) as error:
