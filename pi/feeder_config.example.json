@@ -1,0 +1,36 @@
+{
+  "servos": [
+    {
+      "name": "fs90r",
+      "pin": 12,
+      "calibration": {
+        "stop_us": 1500,
+        "min_us": 700,
+        "max_us": 2300,
+        "deadband_us": 50,
+        "speed_scale": 1.0,
+        "invert": false
+      }
+    },
+    {
+      "name": "second_servo",
+      "pin": 13,
+      "calibration": {
+        "stop_us": 1500,
+        "min_us": 700,
+        "max_us": 2300,
+        "deadband_us": 50,
+        "speed_scale": 1.0,
+        "invert": true
+      }
+    }
+  ],
+  "feed": {
+    "speed": 0.3,
+    "max_speed": 0.5,
+    "feed_s": 1.0,
+    "settle_s": 0.5,
+    "clear_s": 1.0,
+    "max_run_s": 3.0
+  }
+}

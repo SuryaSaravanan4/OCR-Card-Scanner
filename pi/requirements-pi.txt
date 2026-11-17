@@ -1,0 +1,11 @@
+# Extra packages needed ONLY on the Raspberry Pi, and only for real servos (--real-motor).
+# The mock-motor mode and the tests need none of these.
+#
+# gpiozero - sends the servo pulses. lgpio - the pin driver gpiozero uses on current Pi OS.
+#
+# NOT YET VERIFIED ON THE PI: the `ocr-env` virtual environment may not be able to see
+# system-installed packages. If `import gpiozero` fails inside ocr-env, either
+#   pip install -r pi/requirements-pi.txt        (lgpio may need: sudo apt install swig python3-dev)
+# or recreate the environment with:  python3 -m venv --system-site-packages ocr-env
+gpiozero
+lgpio
