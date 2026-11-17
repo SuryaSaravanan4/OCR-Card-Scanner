@@ -1,0 +1,14 @@
+# Test 2.2 Dig Through Time, scan (simulated Pi POST /api/scan): Scryfall is queried, nothing is stored
+# command: python evidence/tools/t22_harness.py scan "Dig Through Time"   | 2026-11-04 14:08:22 EST
+--- BEFORE ---
+cards rows matching: []
+collection rows    : []
+TOTAL cards = 10 | TOTAL collection rows = 5
+14:08:24 HTTP Request: GET https://api.scryfall.com/cards/named?fuzzy=Dig+Through+Time "HTTP/1.1 200 OK"
+14:08:25 HTTP Request: GET https://api.scryfall.com/cards/search?q=oracleid%3Af8b17b89-26ce-4208-874a-9e1d66514640&unique=prints&order=released "HTTP/1.1 200 OK"
+14:08:25 HTTP Request: POST http://testserver/api/scan "HTTP/1.1 200 OK"
+[harness] /api/scan -> 200 {'id': 1, 'exact': False, 'offline': False, 'candidates': 10}
+--- AFTER ---
+cards rows matching: []
+collection rows    : []
+TOTAL cards = 10 | TOTAL collection rows = 5

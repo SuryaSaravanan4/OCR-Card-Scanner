@@ -1,0 +1,14 @@
+# Test 2.2 Dig Through Time, add to collection: card fetched from Scryfall (GET /cards/<uuid>) and stored
+# command: python evidence/tools/t22_harness.py add "Dig Through Time"   | 2026-11-04 14:08:25 EST
+--- BEFORE ---
+cards rows matching: []
+collection rows    : []
+TOTAL cards = 10 | TOTAL collection rows = 5
+14:08:26 HTTP Request: GET https://api.scryfall.com/cards/named?fuzzy=Dig+Through+Time "HTTP/1.1 200 OK"
+14:08:26 HTTP Request: GET https://api.scryfall.com/cards/search?q=oracleid%3Af8b17b89-26ce-4208-874a-9e1d66514640&unique=prints&order=released "HTTP/1.1 200 OK"
+[harness] chose Dig Through Time slz #258 id=66608ea9-d9d2-4fda-9c96-7ce132ee5da9
+14:08:26 HTTP Request: GET https://api.scryfall.com/cards/66608ea9-d9d2-4fda-9c96-7ce132ee5da9 "HTTP/1.1 200 OK"
+--- AFTER ---
+cards rows matching: [('66608ea9-d9d2-4fda-9c96-7ce132ee5da9', 'Dig Through Time', 'slz', '258', '2026-11-04T19:08:26.797376+00:00')]
+collection rows    : [(29, 'Dig Through Time', 1, 'nonfoil')]
+TOTAL cards = 11 | TOTAL collection rows = 6

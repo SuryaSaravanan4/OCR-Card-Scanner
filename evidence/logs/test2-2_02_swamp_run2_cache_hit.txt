@@ -1,0 +1,13 @@
+# Test 2.2 Swamp, run 2 of 2 (EVIDENCE: card already cached; note there is NO 'GET .../cards/<uuid>' line)
+# command: python evidence/tools/t22_harness.py add "Swamp"   | PC re-run on copy of data/cards.db | 2026-11-04 14:08:21 EST
+--- BEFORE ---
+cards rows matching: [('b233b117-9369-45c1-80c5-cc857386b6be', 'Swamp', 'mdd', '296', '2026-11-04T19:08:21.050211+00:00')]
+collection rows    : [(27, 'Swamp', 1, 'nonfoil')]
+TOTAL cards = 10 | TOTAL collection rows = 5
+14:08:22 HTTP Request: GET https://api.scryfall.com/cards/named?fuzzy=Swamp "HTTP/1.1 200 OK"
+14:08:22 HTTP Request: GET https://api.scryfall.com/cards/search?q=oracleid%3A56719f6a-1a6c-4c0a-8d21-18f7d7350b68&unique=prints&order=released "HTTP/1.1 200 OK"
+[harness] chose Swamp mdd #296 id=b233b117-9369-45c1-80c5-cc857386b6be
+--- AFTER ---
+cards rows matching: [('b233b117-9369-45c1-80c5-cc857386b6be', 'Swamp', 'mdd', '296', '2026-11-04T19:08:21.050211+00:00')]
+collection rows    : [(27, 'Swamp', 2, 'nonfoil')]
+TOTAL cards = 10 | TOTAL collection rows = 5
