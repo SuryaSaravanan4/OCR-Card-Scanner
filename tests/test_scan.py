@@ -200,3 +200,44 @@ def test_find_set_and_number_ignores_copyright_mark_on_same_footer():
         _box(312, 1402, 424, 1428, "GABOLEPS", 0.98),
     ]
     assert find_set_and_number(boxes) == ("hob", "59")
+
+
+# Real EasyOCR output from a Pi photo of a foil, sleeved card (CMR #656): the title
+# is cut off the top of the frame, the collector number reads at 1.00, but the foil
+# star makes the set code "CMR*EN" read at only 0.16.
+_REAL_FOIL_FOOTER = [
+    _box(846, 702, 994, 732, "Of I. 1o4", 0.29),
+    _box(729, 707, 843, 745, "on top", 0.84),
+    _box(1180, 782, 1274, 806, "of the Corst", 0.15),
+    _box(1118, 795, 1181, 806, "Wizard=", 0.26),
+    _box(1077, 795, 1121, 812, "2020", 0.96),
+    _box(640, 836, 684, 860, "656", 1.00),
+    _box(754, 833, 925, 869, "RayMOND SwaNLAND", 0.21),
+    _box(640, 850, 732, 879, "CMR*EN", 0.16),
+]
+
+
+def test_find_set_and_number_real_foil_card_with_low_confidence_set_code():
+    assert find_set_and_number(_REAL_FOIL_FOOTER) == ("cmr", "656")
+
+
+def test_identify_real_foil_card_is_an_exact_footer_match():
+    from app.scans import identify
+
+    calls = []
+
+    def search(**params):
+        calls.append(params)
+        return [{"id": "vt", "name": "Vampiric Tutor"}]
+
+    result = identify(_REAL_FOIL_FOOTER, search)
+    assert result["exact"] is True
+    assert calls == [{"set_code": "cmr", "collector_number": "656"}]
+
+
+def test_set_code_below_the_set_confidence_floor_is_still_ignored():
+    boxes = [
+        _box(640, 836, 684, 860, "656", 1.00),
+        _box(640, 850, 732, 879, "CMR*EN", 0.05),
+    ]
+    assert find_set_and_number(boxes) == (None, "656")

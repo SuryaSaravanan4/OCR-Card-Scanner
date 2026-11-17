@@ -37,6 +37,13 @@ _NOT_SET_CODES = {"ILLUS", "EN"}
 # Below this OCR confidence a footer read counts as "fuzzy" - better to fall
 # back to the title than to trust a guess at tiny print.
 _MIN_FOOTER_CONF = 0.4
+# The set code ("CMR" in "CMR*EN") is allowed to be much less certain than the
+# collector number it sits next to: foil stars and tiny print routinely drop its
+# confidence to ~0.15 even when the letters are right (seen on a real Pi photo of
+# CMR #656: number 1.00, "CMR*EN" 0.16). This is safe because the number is still
+# held to _MIN_FOOTER_CONF and set + number must resolve to exactly one printing on
+# Scryfall; a wrong set guess finds nothing and falls back to the title.
+_MIN_SET_CONF = 0.1
 
 
 def clean_name(raw: str) -> str:
@@ -127,8 +134,10 @@ def find_set_and_number(boxes: list[tuple[list, str, float]]) -> tuple[str | Non
     cy = (min(ys) + max(ys)) / 2
     near = [
         b
-        for b in confident
-        if b is not number_box and -height <= (_top(b[0]) + height / 2) - cy <= 4 * height
+        for b in boxes
+        if b[2] >= _MIN_SET_CONF
+        and b is not number_box
+        and -height <= (_top(b[0]) + height / 2) - cy <= 4 * height
     ]
 
     tokens = _row_tokens(near, row_gap=height / 2)
