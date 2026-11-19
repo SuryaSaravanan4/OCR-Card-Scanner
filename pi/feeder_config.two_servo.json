@@ -9,7 +9,7 @@
         "max_us": 2300,
         "deadband_us": 28,
         "speed_scale": 1.0,
-        "invert": false
+        "invert": true
       }
     },
     {
@@ -21,7 +21,7 @@
         "max_us": 2300,
         "deadband_us": 28,
         "speed_scale": 1.0,
-        "invert": false
+        "invert": true
       }
     }
   ],

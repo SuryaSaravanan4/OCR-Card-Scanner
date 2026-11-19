@@ -146,7 +146,9 @@ def test_two_servo_config_matches_the_wiring_and_bench_values():
     assert s.pins == [18, 19]  # header pins 12 and 35
     for cal in s.calibrations:
         cal.validate()
-        assert (cal.stop_us, cal.deadband_us, cal.invert) == (1467, 28, False)
+        # invert=True on both: the first real run spun the wrong way; the operator wants
+        # counterclockwise. Both flipped, so they still turn the same way as each other.
+        assert (cal.stop_us, cal.deadband_us, cal.invert) == (1467, 28, True)
     assert s.feed.speed == 0.2
 
 
