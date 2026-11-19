@@ -1,0 +1,36 @@
+{
+  "servos": [
+    {
+      "name": "servo_a",
+      "pin": 18,
+      "calibration": {
+        "stop_us": 1467,
+        "min_us": 700,
+        "max_us": 2300,
+        "deadband_us": 28,
+        "speed_scale": 1.0,
+        "invert": false
+      }
+    },
+    {
+      "name": "servo_b",
+      "pin": 19,
+      "calibration": {
+        "stop_us": 1467,
+        "min_us": 700,
+        "max_us": 2300,
+        "deadband_us": 28,
+        "speed_scale": 1.0,
+        "invert": false
+      }
+    }
+  ],
+  "feed": {
+    "speed": 0.2,
+    "max_speed": 0.5,
+    "feed_s": 1.5,
+    "settle_s": 0.5,
+    "clear_s": 2.0,
+    "max_run_s": 3.0
+  }
+}

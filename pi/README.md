@@ -32,6 +32,22 @@ after each cycle (an honest hand-checked count for the feeding test).
 The loop stops after `--cards` cards, after `--max-empty` empty scans in a row (default 3: no cards
 left, or a jam), or on Ctrl+C. The servos are always stopped at the end.
 
+## One-card test (feed, scan, eject on Enter)
+
+```
+python -m pi.one_card --real-motor
+```
+1. Loads the OCR model first, then waits: **Enter** = servos A (GPIO18, header pin 12) and B (GPIO19,
+   header pin 35) spin together and push the card in front of the camera.
+2. Photo -> OCR (about a minute on the Pi 4) -> POST to the PC. The PC's `/scan` page refreshes every
+   2 s, so the result appears in the browser by itself.
+3. **Enter** again = both servos spin the same direction and push the card out the far side.
+
+Uses `pi/feeder_config.two_servo.json` (hardware PWM via the `pwm-2chan` overlay, bench calibration
+`stop_us` 1467 / `deadband_us` 28). Tune without editing files: `--speed`, `--feed-s`, `--settle-s`,
+`--clear-s` (each run is still capped by `max_run_s` and `max_speed`). Without `--real-motor` the
+servos are mocks. The photo goes to `~/one_card.jpg`, so `~/magic_small.jpg` is not overwritten.
+
 ## Motors, drivers, and what you have
 
 A Raspberry Pi pin can supply only a few milliamps at 3.3 V. A motor needs far more, so the Pi never

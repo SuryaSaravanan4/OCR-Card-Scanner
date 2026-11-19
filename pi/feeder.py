@@ -1,7 +1,8 @@
 """Drive the servos that push a card in front of the camera.
 
-Runs on the Raspberry Pi, but everything except `ContinuousServoMotor` also runs on a
-PC: the real hardware class imports `gpiozero` only when it is created, and the tests
+Runs on the Raspberry Pi, but everything except the real motor classes also runs on a
+PC: `ContinuousServoMotor` imports `gpiozero` only when it is created,
+`HardwarePwmServoMotor` touches /sys/class/pwm only when it is created, and the tests
 and "nothing wired" runs use `MockMotor`, which moves nothing.
 
 How a continuous-rotation servo is controlled (FeeTech FS90R datasheet): not by
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import os
 import signal
 import time
 from dataclasses import asdict, dataclass, field
@@ -127,7 +129,10 @@ class MockMotor(MotorBase):
 
 
 class ContinuousServoMotor(MotorBase):
-    """A real continuous-rotation servo on a GPIO pin, through gpiozero.
+    """A real continuous-rotation servo on a GPIO pin, through gpiozero (software-timed).
+
+    Not used by `build_feeder` any more (it uses `HardwarePwmServoMotor`); kept for pins
+    that have no hardware PWM.
 
     Wiring (three wires per servo): signal -> this GPIO pin, power -> a SEPARATE 5 V
     supply (not the Pi's 5 V pin), ground -> that supply's ground AND a Pi ground pin.
@@ -176,6 +181,81 @@ class ContinuousServoMotor(MotorBase):
     def close(self) -> None:
         self.stop()
         self._servo.close()
+
+
+class HardwarePwmServoMotor(MotorBase):
+    """A continuous-rotation servo driven by the Pi's hardware PWM through /sys/class/pwm.
+
+    Needs the overlay in /boot/firmware/config.txt, e.g.
+        dtoverlay=pwm-2chan,pin=18,func=2,pin2=19,func2=2
+    which puts GPIO18 on channel 0 and GPIO19 on channel 1.
+    Pulses come from the PWM peripheral, not the CPU, so there is no timing jitter.
+    """
+
+    PERIOD_NS = 20_000_000  # 20 ms frame = 50 Hz
+
+    def __init__(
+        self,
+        name: str,
+        channel: int,
+        cal: ServoCalibration,
+        chip: int = 0,
+        detach_on_stop: bool = True,
+        export_timeout: float = 2.0,
+    ):
+        cal.validate()
+        self.name = name
+        self.cal = cal
+        self.detach_on_stop = detach_on_stop
+        self._chip = Path(f"/sys/class/pwm/pwmchip{chip}")
+        self._dir = self._chip / f"pwm{channel}"
+        self._enabled = False
+
+        if not self._chip.exists():
+            raise RuntimeError(
+                f"{self._chip} not found: is the pwm overlay in /boot/firmware/config.txt?"
+            )
+        if not self._dir.exists():
+            (self._chip / "export").write_text(f"{channel}\n")
+
+        # After export, the kernel creates pwmN and udev fixes its permissions a moment later.
+        deadline = time.monotonic() + export_timeout
+        while not os.access(self._dir / "duty_cycle", os.W_OK):
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"{self._dir} is not writable (permissions or export failed)")
+            time.sleep(0.05)
+
+        self._write("enable", 0)
+        self._write("period", self.PERIOD_NS)  # period first: duty may never exceed it
+        self._write("duty_cycle", round(cal.stop_us * 1000))
+        # Left disabled on purpose: no pulses until run() or stop() is called.
+
+    def _write(self, attr: str, value: int) -> None:
+        (self._dir / attr).write_text(f"{int(value)}\n")
+
+    def _set_pulse_us(self, pulse_us: float) -> None:
+        pulse_us = max(self.cal.min_us, min(self.cal.max_us, pulse_us))
+        self._write("duty_cycle", round(pulse_us * 1000))  # sysfs wants nanoseconds
+        if not self._enabled:
+            self._write("enable", 1)
+            self._enabled = True
+
+    def run(self, speed: float, forward: bool = True) -> None:
+        self._set_pulse_us(speed_to_pulse_us(speed, forward, self.cal))
+
+    def stop(self) -> None:
+        self._set_pulse_us(self.cal.stop_us)
+        if self.detach_on_stop:
+            time.sleep(0.04)  # let a stop pulse or two go out first
+            self._write("enable", 0)
+            self._enabled = False
+
+    def close(self) -> None:
+        try:
+            self.stop()
+        finally:
+            self._write("enable", 0)
+            self._enabled = False
 
 
 @dataclass
@@ -301,11 +381,10 @@ class FeederSettings:
     """Which pins, which servos, and the feed timing. Loaded from a JSON file if given."""
 
     names: list[str] = field(default_factory=lambda: ["servo_a", "servo_b"])
-    # PLACEHOLDER pins (BCM numbers, not board pin numbers). GPIO12 and GPIO13 are the Pi's two
-    # hardware-PWM pins, but gpiozero's default driver (lgpio) times the pulses in software, so
-    # they are NOT hardware-timed unless you switch drivers (see pi/README.md, "PWM for two
-    # servos"). Any free GPIO pins work. Confirm against the real wiring before --real-motor.
-    pins: list[int] = field(default_factory=lambda: [12, 13])
+    # BCM numbers, not board pin numbers. As wired: servo A on GPIO18 (header pin 12),
+    # servo B on GPIO19 (header pin 35). The pwm-2chan overlay in /boot/firmware/config.txt
+    # routes exactly these two pins to hardware PWM channels 0 and 1.
+    pins: list[int] = field(default_factory=lambda: [18, 19])
     calibrations: list[ServoCalibration] = field(
         default_factory=lambda: [ServoCalibration(), ServoCalibration()]
     )
@@ -337,6 +416,10 @@ def settings_to_dict(settings: FeederSettings) -> dict:
     }
 
 
+# BCM pin -> Pi 4 hardware PWM channel. 12 and 18 share channel 0; 13 and 19 share channel 1.
+PWM_CHANNEL = {12: 0, 18: 0, 13: 1, 19: 1}
+
+
 def build_feeder(
     settings: FeederSettings,
     real_motor: bool = False,
@@ -345,10 +428,19 @@ def build_feeder(
     events: list | None = None,
 ) -> Feeder:
     """Make a Feeder. Without real_motor, every servo is a MockMotor that moves nothing."""
+    if real_motor:
+        channels = []
+        for pin in settings.pins:
+            if pin not in PWM_CHANNEL:
+                raise ValueError(f"GPIO{pin} is not a hardware PWM pin; use one of {sorted(PWM_CHANNEL)}")
+            channels.append(PWM_CHANNEL[pin])
+        if len(set(channels)) != len(channels):
+            raise ValueError(f"pins {settings.pins} share a PWM channel; use 12+13 or 18+19")
+
     motors: list[MotorBase] = []
     for name, pin, cal in zip(settings.names, settings.pins, settings.calibrations):
         if real_motor:
-            motors.append(ContinuousServoMotor(name, pin, cal))
+            motors.append(HardwarePwmServoMotor(name, PWM_CHANNEL[pin], cal))
         else:
             motors.append(MockMotor(name, events=events))
     return Feeder(motors, settings.feed, sleep=sleep, clock=clock)
