@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from markupsafe import Markup, escape
 
-from . import config, db, scans, service, store
+from . import config, db, pi_link, scans, service, store
 from .scryfall import ScryfallOffline
 
 MANA_SYMBOL_RE = re.compile(r"\{([^{}]+)\}")
@@ -192,12 +192,16 @@ def collection_page(
 
 @app.post("/collection")
 def add_owned_route(
+    request: Request,
     card_id: str = Form(...),
     finish: str = Form("nonfoil"),
     quantity: int = Form(1),
     condition: str = Form(""),
 ):
     service.add_owned(card_id, quantity=quantity, finish=finish, condition=condition)
+    if request.headers.get("HX-Request"):
+        # From the Scan page's picker: stay on the page (a stack may still be running).
+        return HTMLResponse('<span class="added">Added to collection</span>')
     return RedirectResponse(url="/collection", status_code=303)
 
 
@@ -259,19 +263,28 @@ def api_search(q: str = "", set_code: str = "", collector_number: str = ""):
 class ScanPayload(BaseModel):
     """What the Raspberry Pi sends after OCR: EasyOCR's detections, each
     {text, confidence, box?}. `box` (four [x, y] corners) is needed to read the
-    set code + collector number; without it only the title is used."""
+    set code + collector number; without it only the title is used.
+    During a stack run the Pi also sends run_id / card_no / attempt, so a retry of
+    the same card replaces its entry instead of adding a new one."""
 
     type: str = "card_scan"
     detections: list[dict]
     elapsed_seconds: float | None = None
+    run_id: int | None = None
+    card_no: int | None = None
+    attempt: int | None = None
 
 
 @app.post("/api/scan")
 def api_scan(payload: ScanPayload):
+    pi_link.seen()
     scan = scans.record(
         payload.detections,
         payload.elapsed_seconds,
         lambda text=None, **kw: service.search(text or "", **kw),
+        run_id=payload.run_id,
+        card_no=payload.card_no,
+        attempt=payload.attempt,
     )
     return {
         "id": scan["id"],
@@ -281,7 +294,65 @@ def api_scan(payload: ScanPayload):
     }
 
 
+def _scan_context(message: str | None = None) -> dict:
+    link = pi_link.state()
+    run = link["run"]
+    if run is not None:
+        rows = list(reversed(scans.cards_for_run(run["id"])))  # newest first
+    else:
+        latest = scans.latest()
+        rows = [latest] if latest else []
+    return {"link": link, "run": run, "rows": rows, "message": message}
+
+
+def _render_scan_panel(request: Request, message: str | None = None):
+    return templates.TemplateResponse(request, "_scan.html", _scan_context(message))
+
+
 @app.get("/scan", response_class=HTMLResponse)
 def scan_page(request: Request):
     template = "_scan.html" if request.headers.get("HX-Request") else "scan.html"
-    return templates.TemplateResponse(request, template, {"scan": scans.latest()})
+    return templates.TemplateResponse(request, template, _scan_context())
+
+
+@app.post("/scan/start", response_class=HTMLResponse)
+def scan_start(request: Request):
+    try:
+        pi_link.start_run()
+        message = None
+    except (pi_link.PiNotConnected, pi_link.RunInProgress) as exc:
+        message = str(exc)
+    return _render_scan_panel(request, message)
+
+
+@app.post("/scan/stop", response_class=HTMLResponse)
+def scan_stop(request: Request):
+    pi_link.stop_run()
+    return _render_scan_panel(request, "Stopping after the current card...")
+
+
+@app.get("/scan/item/{scan_id}", response_class=HTMLResponse)
+def scan_item(request: Request, scan_id: int):
+    scan = scans.get(scan_id)
+    if scan is None:
+        return HTMLResponse('<p class="muted">That scan is no longer available.</p>', status_code=404)
+    return templates.TemplateResponse(request, "_scan_picker.html", {"scan": scan})
+
+
+class PiEvent(BaseModel):
+    run_id: int
+    event: str
+    card_no: int | None = None
+    reason: str | None = None
+    message: str | None = None
+
+
+@app.get("/api/pi/command")
+def pi_command(busy: int = 0):
+    return pi_link.poll(bool(busy))
+
+
+@app.post("/api/pi/event")
+def pi_event(event: PiEvent):
+    pi_link.report(event.model_dump())
+    return {"ok": True}

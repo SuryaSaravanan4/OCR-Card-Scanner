@@ -1,0 +1,32 @@
+<article class="scan-picker">
+  <header>
+    <strong>{{ scan.name or (scan.candidates[0].name if scan.candidates else "Unidentified card") }}</strong>
+    <small class="muted">
+      {% if scan.card_no %}card {{ scan.card_no }} - {% endif %}scan #{{ scan.id }} at {{ scan.received_at }}
+      {% if scan.exact %}- exact match on set + collector number{% else %}- pick the printing you have{% endif %}
+    </small>
+  </header>
+  {% if not scan.candidates %}
+  <p class="muted">No printings to choose from for this scan.</p>
+  {% else %}
+  <div class="card-grid">
+    {% for c in scan.candidates %}
+    <div class="card-tile">
+      <a href="/cards/{{ c.id }}">
+        {% if c.image_uri %}<img src="{{ c.image_uri }}" alt="{{ c.name }}">{% endif %}
+      </a>
+      <div class="card-tile-info">
+        <strong>{{ c.name }}</strong>
+        <small>{{ c.set_name }} ({{ (c.set_code or "")|upper }}) #{{ c.collector_number }}</small>
+        <small>{{ c.rarity }}</small>
+        <span class="card-tile-price">{{ "$%.2f"|format(c.price_usd|float) if c.price_usd else "price unknown" }}</span>
+        <form hx-post="/collection" hx-swap="outerHTML">
+          <input type="hidden" name="card_id" value="{{ c.id }}">
+          <button type="submit">Add to collection</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</article>

@@ -318,9 +318,12 @@ def make_scan_fn(reader, image_path: Path, read_footer: bool) -> Callable[[], di
 
 
 def make_send_fn(pc_url: str) -> Callable[[dict], dict | None]:
-    """A function that POSTs a scan to the PC and returns the PC's JSON reply (or None)."""
+    """A function that POSTs a scan to the PC and returns the PC's JSON reply (or None).
 
-    def send(scan: dict) -> dict | None:
+    `extra` (optional) is merged into the payload, e.g. run_id / card_no / attempt.
+    """
+
+    def send(scan: dict, extra: dict | None = None) -> dict | None:
         payload = {
             "type": "card_scan",
             "detections": [
@@ -328,6 +331,7 @@ def make_send_fn(pc_url: str) -> Callable[[dict], dict | None]:
                 for d in scan["detections"]
             ],
             "elapsed_seconds": round(scan.get("ocr_s", 0.0), 2),
+            **(extra or {}),
         }
         request = urllib.request.Request(
             pc_url,

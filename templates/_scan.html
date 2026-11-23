@@ -1,34 +1,58 @@
-{% if not scan %}
-<p class="muted">Waiting for a scan from the Raspberry Pi...</p>
-{% elif scan.offline %}
-<p class="offline-notice">You're offline - connect to wifi to look up scanned cards.</p>
-<p class="muted">Scan #{{ scan.id }} at {{ scan.received_at }}.</p>
-{% elif not scan.candidates %}
-<p class="muted">Scan #{{ scan.id }} at {{ scan.received_at }}: couldn't identify a card.</p>
-<p class="muted">OCR read: {% for d in scan.detections %}"{{ d.text }}"{% if not loop.last %}, {% endif %}{% else %}nothing{% endfor %}</p>
-{% else %}
-<p class="muted">
-  Scan #{{ scan.id }} at {{ scan.received_at }}
-  {% if scan.exact %}- exact match on set + collector number
-  {% else %}- {{ scan.candidates|length }} candidate(s) from the title "{{ scan.name }}" - pick one{% endif %}
-</p>
-<div class="card-grid">
-  {% for c in scan.candidates %}
-  <div class="card-tile">
-    <a href="/cards/{{ c.id }}">
-      {% if c.image_uri %}<img src="{{ c.image_uri }}" alt="{{ c.name }}">{% endif %}
-    </a>
-    <div class="card-tile-info">
-      <strong>{{ c.name }}</strong>
-      <small>{{ c.set_name }} ({{ (c.set_code or "")|upper }}) #{{ c.collector_number }}</small>
-      <small>{{ c.rarity }}</small>
-      <span class="card-tile-price">{{ "$%.2f"|format(c.price_usd|float) if c.price_usd else "price unknown" }}</span>
-      <form method="post" action="/collection">
-        <input type="hidden" name="card_id" value="{{ c.id }}">
-        <button type="submit">Add to collection</button>
-      </form>
-    </div>
-  </div>
-  {% endfor %}
+<div class="scan-controls">
+  {% if run and run.active %}
+  <button type="button" class="secondary" hx-post="/scan/stop" hx-target="#scan-panel" hx-swap="innerHTML">Stop</button>
+  <span class="muted">Scanning the stack (started {{ run.started_at }})...</span>
+  {% else %}
+  <button type="button" hx-post="/scan/start" hx-target="#scan-panel" hx-swap="innerHTML"
+          {% if not link.connected %}disabled{% endif %}>Scan stack</button>
+  {% endif %}
+  {% if link.connected %}
+  <small class="pi-status pi-on">Pi connected</small>
+  {% else %}
+  <small class="pi-status pi-off">Pi not connected: start the scanner on the Pi (scripts/pi_link.ps1)</small>
+  {% endif %}
 </div>
+
+{% if message %}<p class="flash">{{ message }}</p>{% endif %}
+
+{% if run and run.failures %}
+<div class="scan-alert" role="alert">
+  <strong>Some cards could not be scanned:</strong>
+  <ul>
+    {% for f in run.failures %}<li>Card {{ f.card_no or "?" }}: {{ f.message }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if run and run.reason_text %}
+<p class="{{ 'scan-alert' if run.problem else 'flash' }}">
+  Run finished: {{ run.reason_text }}{% if run.message %} ({{ run.message }}){% endif %}
+</p>
+{% endif %}
+
+{% if not rows %}
+<p class="muted">{% if run and run.active %}Waiting for the first card (about a minute per card)...{% elif run %}No cards were scanned in this run.{% else %}Waiting for a scan from the Raspberry Pi...{% endif %}</p>
+{% else %}
+<ol class="scan-list" reversed>
+  {% for scan in rows %}
+  <li class="scan-row{% if not scan.candidates %} scan-row-failed{% endif %}">
+    {% if scan.card_no %}<span class="muted">Card {{ scan.card_no }}:</span>{% endif %}
+    {% if scan.offline %}
+    <span class="offline-notice">You're offline - connect to wifi to look up scanned cards.</span>
+    {% elif not scan.candidates %}
+    <span>couldn't identify a card</span>
+    <small class="muted">OCR read: {% for d in scan.detections %}"{{ d.text }}"{% if not loop.last %}, {% endif %}{% else %}nothing{% endfor %}</small>
+    {% else %}
+    <a href="#picker" hx-get="/scan/item/{{ scan.id }}" hx-target="#picker" hx-swap="innerHTML">
+      <strong>{{ scan.name or scan.candidates[0].name }}</strong>
+    </a>
+    <small class="muted">
+      {% if scan.exact %}exact match on set + collector number
+      {% else %}{{ scan.candidates|length }} printing(s) - click to pick one{% endif %}
+    </small>
+    {% endif %}
+    {% if scan.attempt and scan.attempt > 1 %}<small class="muted">(try {{ scan.attempt }})</small>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
 {% endif %}

@@ -4,4 +4,6 @@
 <div id="scan-panel" hx-get="/scan" hx-trigger="every 2s" hx-swap="innerHTML">
   {% include "_scan.html" %}
 </div>
+{# Outside the polled panel, so the 2 s refresh never closes the card you are picking. #}
+<div id="picker"></div>
 {% endblock %}

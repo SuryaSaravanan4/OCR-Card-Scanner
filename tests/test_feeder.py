@@ -406,3 +406,33 @@ def test_summary_counts_and_rate():
     assert s["avg_total_s"] == pytest.approx(2.5)  # 1.0 feed + 0.5 settle + 1.0 clear on the fake clock
     assert s["cards_per_min"] == pytest.approx(60 / 2.5)
     assert summarize([]) == {"cycles": 0}
+
+
+# ------------------------------------------------- per-phase servo selection
+
+
+def test_feed_and_clear_can_use_different_servos_and_directions():
+    config = FeedConfig(feed_motors={"m0": "forward", "m1": "forward"}, clear_motors={"m1": "reverse"})
+    feeder, mocks, events, clock = make_feeder(config)
+    feeder.feed_cycle()
+    feeder.clear()
+    runs = [e for e in events if e[1] == "run"]
+    assert runs == [("m0", "run", 0.3, True), ("m1", "run", 0.3, True), ("m1", "run", 0.3, False)]
+    assert not any(m.running for m in mocks)
+
+
+def test_unknown_servo_or_bad_direction_in_a_phase_is_rejected():
+    with pytest.raises(ValueError, match="unknown servo"):
+        make_feeder(FeedConfig(clear_motors={"nope": "forward"}))
+    with pytest.raises(ValueError, match="forward' or 'reverse"):
+        FeedConfig(clear_motors={"m1": "backwards"}).validate()
+    with pytest.raises(ValueError, match="at least one"):
+        FeedConfig(feed_motors={}).validate()
+
+
+def test_phase_settings_survive_the_json_round_trip(tmp_path):
+    settings = FeederSettings()
+    settings.feed.clear_motors = {"servo_b": "reverse"}
+    path = tmp_path / "f.json"
+    path.write_text(json.dumps(settings_to_dict(settings)), encoding="utf-8")
+    assert load_settings(path).feed.clear_motors == {"servo_b": "reverse"}

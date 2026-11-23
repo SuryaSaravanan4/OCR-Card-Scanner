@@ -268,6 +268,11 @@ class FeedConfig:
     settle_s: float = 0.5     # pause after the push so the card stops moving before the photo
     clear_s: float = 1.0      # servos run this long to push the card out (0 = no eject push)
     max_run_s: float = 3.0    # no single run may be longer than this
+    # Which servos run in each phase, and which way: {"servo_a": "forward", ...}.
+    # None = every servo, forward (the original "all together" behaviour).
+    # "forward"/"reverse" are relative to each servo's `invert` calibration.
+    feed_motors: dict[str, str] | None = None
+    clear_motors: dict[str, str] | None = None
 
     def validate(self) -> None:
         if not (0 < self.speed <= self.max_speed <= 1):
@@ -279,6 +284,15 @@ class FeedConfig:
             raise ValueError("max_run_s must be > 0")
         if self.feed_s > self.max_run_s or self.clear_s > self.max_run_s:
             raise ValueError("feed_s and clear_s may not exceed max_run_s")
+        for name in ("feed_motors", "clear_motors"):
+            spec = getattr(self, name)
+            if spec is None:
+                continue
+            if not spec:
+                raise ValueError(f"{name} must name at least one servo (or be left out for all)")
+            bad = [d for d in spec.values() if d not in ("forward", "reverse")]
+            if bad:
+                raise ValueError(f"{name}: direction must be 'forward' or 'reverse', got {bad}")
 
 
 class Feeder:
@@ -294,12 +308,34 @@ class Feeder:
         self.motors = list(motors)
         self.config = config or FeedConfig()
         self.config.validate()
+        names = {m.name for m in self.motors}
+        for spec_name in ("feed_motors", "clear_motors"):
+            spec = getattr(self.config, spec_name) or {}
+            unknown = sorted(set(spec) - names)
+            if unknown:
+                raise ValueError(f"{spec_name} names unknown servo(s) {unknown}; servos are {sorted(names)}")
         self.sleep = sleep
         self.clock = clock
         self._closed = False
 
-    def advance(self, seconds: float, speed: float | None = None, forward: bool = True) -> float:
-        """Run every motor for `seconds`, then stop them. Returns the time actually spent."""
+    def _plan(self, spec: dict[str, str] | None, forward: bool) -> list[tuple[MotorBase, bool]]:
+        """Which motors to run and which way. No spec = every motor, `forward`."""
+        if spec is None:
+            return [(m, forward) for m in self.motors]
+        return [(m, (spec[m.name] == "forward") == forward) for m in self.motors if m.name in spec]
+
+    def advance(
+        self,
+        seconds: float,
+        speed: float | None = None,
+        forward: bool = True,
+        motors: dict[str, str] | None = None,
+    ) -> float:
+        """Run the motors for `seconds`, then stop ALL of them. Returns the time spent.
+
+        `motors` picks which ones run and their direction ({"servo_b": "reverse"});
+        None runs every motor in `forward` direction.
+        """
         speed = self.config.speed if speed is None else speed
         if seconds <= 0:
             raise FeederError(f"run time must be > 0 seconds, got {seconds}")
@@ -313,8 +349,8 @@ class Feeder:
             )
         started = self.clock()
         try:
-            for motor in self.motors:
-                motor.run(speed, forward)
+            for motor, direction in self._plan(motors, forward):
+                motor.run(speed, direction)
             self.sleep(seconds)
         finally:
             self.stop()
@@ -322,7 +358,11 @@ class Feeder:
 
     def feed_cycle(self) -> dict:
         """Push the card in front of the camera, then wait for it to stop moving."""
-        feed_s = self.advance(self.config.feed_s) if self.config.feed_s > 0 else 0.0
+        feed_s = (
+            self.advance(self.config.feed_s, motors=self.config.feed_motors)
+            if self.config.feed_s > 0
+            else 0.0
+        )
         t = self.clock()
         if self.config.settle_s > 0:
             self.sleep(self.config.settle_s)
@@ -330,7 +370,9 @@ class Feeder:
 
     def clear(self) -> float:
         """Push the scanned card out of the way. Does nothing if clear_s is 0."""
-        return self.advance(self.config.clear_s) if self.config.clear_s > 0 else 0.0
+        if self.config.clear_s <= 0:
+            return 0.0
+        return self.advance(self.config.clear_s, motors=self.config.clear_motors)
 
     def stop(self) -> None:
         """Stop every motor. Safe to call any number of times, from anywhere."""
@@ -357,7 +399,7 @@ class Feeder:
                     pass
 
     def install_safety_handlers(self) -> None:
-        """Stop the motors on exit, Ctrl+C and SIGTERM."""
+        """Stop the motors on exit, Ctrl+C, SIGTERM and SIGHUP (the SSH session dropped)."""
         atexit.register(self.close)
 
         def handler(signum, frame):
@@ -366,7 +408,10 @@ class Feeder:
                 raise KeyboardInterrupt
             raise SystemExit(128 + signum)
 
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        signals = [signal.SIGINT, signal.SIGTERM]
+        if hasattr(signal, "SIGHUP"):  # not on Windows
+            signals.append(signal.SIGHUP)
+        for sig in signals:
             try:
                 signal.signal(sig, handler)
             except (ValueError, OSError):
@@ -414,6 +459,13 @@ def settings_to_dict(settings: FeederSettings) -> dict:
         ],
         "feed": asdict(settings.feed),
     }
+
+
+def describe_motion(spec: dict[str, str] | None) -> str:
+    """'servo_a+servo_b forward' / 'servo_b reverse' / 'all servos' for the start-up line."""
+    if not spec:
+        return "all servos"
+    return ", ".join(f"{name} {direction}" for name, direction in spec.items())
 
 
 # BCM pin -> Pi 4 hardware PWM channel. 12 and 18 share channel 0; 13 and 19 share channel 1.

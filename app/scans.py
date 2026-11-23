@@ -235,10 +235,26 @@ def identify(
 _lock = threading.Lock()
 _latest: dict | None = None
 _counter = 0
+# Every scan kept in arrival order (bounded), so a stack run can list all its cards.
+_entries: list[dict] = []
+_MAX_ENTRIES = 500
 
 
-def record(detections: list[dict], elapsed_seconds: float | None, search: Callable[..., list[dict]]) -> dict:
-    """Identify a scan from the Pi and store it as the latest one."""
+def record(
+    detections: list[dict],
+    elapsed_seconds: float | None,
+    search: Callable[..., list[dict]],
+    run_id: int | None = None,
+    card_no: int | None = None,
+    attempt: int | None = None,
+) -> dict:
+    """Identify a scan from the Pi and store it as the latest one.
+
+    When the Pi is running a stack (`run_id` + `card_no` given), a retry of the same
+    card REPLACES that card's entry (same id, same place in the list) instead of
+    adding a second row. Without them (pi/one_card.py, older scripts) every scan is
+    its own entry, as before.
+    """
     global _latest, _counter
     boxes = boxes_from_detections(detections)
     try:
@@ -256,16 +272,30 @@ def record(detections: list[dict], elapsed_seconds: float | None, search: Callab
             "collector_number": None,
         }
         offline = isinstance(exc, ScryfallOffline)
+    fields = {
+        **result,
+        "offline": offline,
+        "elapsed_seconds": elapsed_seconds,
+        "detections": [{"text": d.get("text"), "confidence": d.get("confidence")} for d in detections],
+        "received_at": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+        "run_id": run_id,
+        "card_no": card_no,
+        "attempt": attempt,
+    }
     with _lock:
-        _counter += 1
-        _latest = {
-            **result,
-            "id": _counter,
-            "offline": offline,
-            "elapsed_seconds": elapsed_seconds,
-            "detections": [{"text": d.get("text"), "confidence": d.get("confidence")} for d in detections],
-            "received_at": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
-        }
+        existing = None
+        if run_id is not None and card_no is not None:
+            existing = next(
+                (e for e in _entries if e["run_id"] == run_id and e["card_no"] == card_no), None
+            )
+        if existing is not None:
+            existing.update(fields)
+            _latest = existing
+        else:
+            _counter += 1
+            _latest = {**fields, "id": _counter}
+            _entries.append(_latest)
+            del _entries[:-_MAX_ENTRIES]
         return _latest
 
 
@@ -274,8 +304,20 @@ def latest() -> dict | None:
         return _latest
 
 
+def get(scan_id: int) -> dict | None:
+    with _lock:
+        return next((e for e in _entries if e["id"] == scan_id), None)
+
+
+def cards_for_run(run_id: int) -> list[dict]:
+    """The cards of one stack run, in the order they were scanned."""
+    with _lock:
+        return sorted((e for e in _entries if e["run_id"] == run_id), key=lambda e: e["card_no"])
+
+
 def clear() -> None:
     global _latest, _counter
     with _lock:
         _latest = None
         _counter = 0
+        _entries.clear()

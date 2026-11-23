@@ -8,9 +8,9 @@ card out the far side.
 
 Run from the folder that holds `pi/`. Steps:
   1. load the OCR model (slow, done first so the card does not wait in front of the camera)
-  2. Enter -> servos A and B spin together for feed_s, then settle_s pause
+  2. Enter -> the feed servos (config feed_motors; A + B) spin for feed_s, then settle_s pause
   3. photo -> OCR (title + footer, about a minute on the Pi 4) -> POST to the PC
-  4. Enter -> servos A and B spin together, same direction, for clear_s: the card leaves
+  4. Enter -> the eject servos (config clear_motors; B only, reversed) spin for clear_s
 The servos are stopped at the end, on any error, and on Ctrl+C.
 
 The photo is saved to ~/one_card.jpg so it does not overwrite ~/magic_small.jpg.
@@ -30,7 +30,7 @@ from pi.autoscan import (
     make_scan_fn,
     make_send_fn,
 )
-from pi.feeder import FeederError, build_feeder, load_settings
+from pi.feeder import FeederError, build_feeder, describe_motion, load_settings
 
 DEFAULT_CONFIG = Path(__file__).resolve().parent / "feeder_config.two_servo.json"
 PHOTO_PATH = Path.home() / "one_card.jpg"
@@ -134,7 +134,8 @@ def main() -> int:
     f = settings.feed
     print(f"Servos: {'REAL' if args.real_motor else 'MOCK (nothing will move)'} | "
           + ", ".join(f"{n} on GPIO{p}" for n, p in zip(settings.names, settings.pins)))
-    print(f"speed {f.speed} | feed {f.feed_s} s | settle {f.settle_s} s | eject {f.clear_s} s (same direction)")
+    print(f"speed {f.speed} | feed {f.feed_s} s ({describe_motion(f.feed_motors)}) | settle {f.settle_s} s | "
+          f"eject {f.clear_s} s ({describe_motion(f.clear_motors)})")
 
     photo = args.image or PHOTO_PATH
     capture_fn = (lambda: None) if args.image else (lambda: capture_photo(photo))

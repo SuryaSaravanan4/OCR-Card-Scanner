@@ -31,6 +31,13 @@
     "feed_s": 1.5,
     "settle_s": 0.5,
     "clear_s": 2.0,
-    "max_run_s": 3.0
+    "max_run_s": 3.0,
+    "feed_motors": {
+      "servo_a": "forward",
+      "servo_b": "forward"
+    },
+    "clear_motors": {
+      "servo_b": "reverse"
+    }
   }
 }

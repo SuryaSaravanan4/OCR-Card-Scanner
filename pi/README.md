@@ -32,6 +32,36 @@ after each cycle (an honest hand-checked count for the feeding test).
 The loop stops after `--cards` cards, after `--max-empty` empty scans in a row (default 3: no cards
 left, or a jam), or on Ctrl+C. The servos are always stopped at the end.
 
+## Scan a stack from the browser (over campus Wi-Fi)
+
+The campus network (PC on eduroam, Pi on Registered4OSU) blocks the Pi from reaching the PC
+directly, but allows **SSH from the PC to the Pi**. So the PC opens one SSH session that carries a
+reverse tunnel: on the Pi, `http://127.0.0.1:8000` reaches the app on the PC. The app stays on the
+PC's `127.0.0.1`, so nobody else on campus can open it or start the motors.
+
+On the PC, from the repo folder:
+```
+python -m uvicorn app.main:app --port 8000      # window 1: the app
+.\scripts\pi_link.ps1                           # window 2: tunnel + scanner on the Pi (real servos)
+.\scripts\pi_link.ps1 -Mock                     #   ...or with mock servos (nothing moves)
+.\scripts\pi_link.ps1 -PiHost <new address>     #   ...if the Pi's address changed
+```
+Open http://127.0.0.1:8000/scan. When it says **Pi connected**, load the stack and click **Scan stack**.
+The Pi then feeds, photographs, reads and ejects card after card on its own:
+- Each card appears in the list; click its name to pick the printing and add it to the collection.
+- A card is retried up to 3 times **without moving it** (new photo each time). If the PC still can't
+  identify it, it is listed in red, ejected, and the run continues.
+- No readable text after 3 tries = no card in front of the camera: the run ends ("stack is empty, or
+  a card is jammed"). Nothing is ejected.
+- **Stop** in the browser takes effect before the next card. Ctrl+C or closing the `pi_link` window
+  stops the scanner and the servos.
+- Each try is ~70 s of OCR, so the end-of-stack check takes about 3.5 minutes. Use
+  `-AgentArgs "--attempts 2"` to shorten it.
+
+**The Pi's address** (now 172.30.226.152) can change. On the Pi: `hostname -I`. Typing the SSH
+password each time can be avoided by copying the PC's key once (PowerShell):
+`type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh pi-model-b@<Pi address> "cat >> ~/.ssh/authorized_keys"`.
+
 ## One-card test (feed, scan, eject on Enter)
 
 ```

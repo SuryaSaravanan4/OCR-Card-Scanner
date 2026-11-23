@@ -253,3 +253,32 @@ th a.sort-link:hover,
 th a.sort-link.active {
   text-decoration: underline;
 }
+
+/* Scan page: stack controls, alerts, the per-run card list. */
+.scan-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.scan-controls button {
+  margin: 0;
+  width: auto;
+}
+.pi-status.pi-on { color: var(--pico-ins-color); }
+.pi-status.pi-off { color: var(--pico-del-color); }
+.scan-alert {
+  border-left: 4px solid var(--pico-del-color);
+  background: var(--pico-code-background-color);
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 1rem;
+}
+.scan-alert ul { margin: 0.3rem 0 0; }
+.scan-list li {
+  margin-bottom: 0.4rem;
+}
+.scan-list li small { margin-left: 0.4rem; }
+.scan-row-failed { color: var(--pico-del-color); }
+.scan-picker { margin-top: 1.5rem; }
+.added { color: var(--pico-ins-color); font-weight: bold; }
