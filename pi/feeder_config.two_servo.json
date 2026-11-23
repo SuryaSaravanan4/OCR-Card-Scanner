@@ -34,7 +34,7 @@
     "max_run_s": 3.0,
     "feed_motors": {
       "servo_a": "forward",
-      "servo_b": "forward"
+      "servo_b": "reverse"
     },
     "clear_motors": {
       "servo_b": "reverse"

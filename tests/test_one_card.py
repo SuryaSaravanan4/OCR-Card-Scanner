@@ -150,8 +150,8 @@ def test_two_servo_config_matches_the_wiring_and_bench_values():
         # counterclockwise. Both flipped, so they still turn the same way as each other.
         assert (cal.stop_us, cal.deadband_us, cal.invert) == (1467, 28, True)
     assert s.feed.speed == 0.2
-    # Feed: A and B together. Eject: only B, the other way (the operator's spec, 2026-11-23).
-    assert s.feed.feed_motors == {"servo_a": "forward", "servo_b": "forward"}
+    # Feed: A counterclockwise + B clockwise together. Eject: only B, clockwise (operator, 2026-11-23).
+    assert s.feed.feed_motors == {"servo_a": "forward", "servo_b": "reverse"}
     assert s.feed.clear_motors == {"servo_b": "reverse"}
 
 
@@ -166,7 +166,7 @@ def test_with_the_real_config_the_eject_runs_only_servo_b_reversed():
     events.clear()
     feeder.clear()
     eject_runs = [e for e in events if e[1] == "run"]
-    assert feed_runs == [("servo_a", "run", 0.2, True), ("servo_b", "run", 0.2, True)]
+    assert feed_runs == [("servo_a", "run", 0.2, True), ("servo_b", "run", 0.2, False)]
     assert eject_runs == [("servo_b", "run", 0.2, False)]
     assert {e[0] for e in events if e[1] == "stop"} == {"servo_a", "servo_b"}  # both told to stop
 
