@@ -33,18 +33,20 @@ from pi.feeder import FeederError, build_feeder, load_settings
 
 HOME = Path.home()
 IMAGE_PATH = HOME / "magic_small.jpg"
-TITLE_CROP_PATH = HOME / "name_crop.jpg"
+ROTATED_PATH = HOME / "rotated.jpg"
+TITLE_CROP_PATH = HOME / "title_crop.jpg"
 FOOTER_CROP_PATH = HOME / "footer_crop.jpg"
 CYCLE_LOG = HOME / "autoscan_cycles.csv"
 DEFAULT_PC_URL = "http://192.168.137.1:8000/api/scan"
 
 CAPTURE_WIDTH = 1920
 CAPTURE_HEIGHT = 1080
-# Bands are fractions of the photo height (0 = top, 1 = bottom), full width. The footer
-# band starts at 0.65 because the footer of a card photographed on the Pi sat ~77-81%
-# of the way down; check footer_crop.jpg if reads are poor.
-TITLE_BAND = (0.0, 0.5)
-FOOTER_BAND = (0.65, 1.0)
+# The camera sees the card sideways: each photo is rotated 90 degrees counterclockwise
+# (card upright, saved as ~/rotated.jpg), then these boxes are cut out of it. Fractions
+# of the ROTATED image, as (x1, x2, y1, y2). Measured on the bench; check
+# title_crop.jpg / footer_crop.jpg if reads are poor.
+TITLE_BOX = (0.27, 0.79, 0.28, 0.37)   # name band
+FOOTER_BOX = (0.29, 0.46, 0.63, 0.70)  # set code and card number
 
 # A detection counts as "read some text" only above this OCR confidence, so a blank
 # tray (which can produce junk at ~0) is not mistaken for a fed card.
@@ -246,22 +248,32 @@ def capture_photo(path: Path = IMAGE_PATH) -> None:
         ) from exc
 
 
-def read_band(reader, image, band: tuple[float, float], crop_path: Path):
-    """OCR one horizontal band of the photo. Returns (detections, ocr_s, crop_s).
+def crop_box(image, box: tuple[float, float, float, float]):
+    """Cut a box out of the image. `box` is (x1, x2, y1, y2) as fractions.
+    Returns (crop, x_offset, y_offset) in pixels."""
+    h, w = image.shape[:2]
+    x1, x2, y1, y2 = box
+    px1, px2 = int(x1 * w), int(x2 * w)
+    py1, py2 = int(y1 * h), int(y2 * h)
+    return image[py1:py2, px1:px2], px1, py1
 
-    Box y-coordinates are shifted to full-photo coordinates so the PC can tell the
-    footer (low in the photo) from the title (high in the photo).
+
+def read_box(reader, image, box, crop_path: Path, region: str, write=None):
+    """OCR one box of the (rotated) photo. Returns (detections, ocr_s, crop_s).
+
+    Box coordinates are shifted back to rotated-photo coordinates so the PC can tell the
+    footer (low on the card) from the title (high on the card): it takes the LOWEST
+    number-shaped text as the collector number.
     """
-    import cv2
+    if write is None:
+        import cv2
 
+        write = cv2.imwrite
     t_crop = time.perf_counter()
-    height = image.shape[0]
-    y1 = max(0, min(height, int(round(height * band[0]))))
-    y2 = max(0, min(height, int(round(height * band[1]))))
-    crop = image[y1:y2, :]
+    crop, dx, dy = crop_box(image, box)
     if crop.size == 0:
-        raise ValueError(f"Crop is empty. Band {band} on a photo {height} px high")
-    cv2.imwrite(str(crop_path), crop)
+        raise ValueError(f"{region} crop is empty: box {box} on a {image.shape[1]}x{image.shape[0]} image")
+    write(str(crop_path), crop)
     crop_s = time.perf_counter() - t_crop
 
     t_ocr = time.perf_counter()
@@ -270,17 +282,19 @@ def read_band(reader, image, band: tuple[float, float], crop_path: Path):
 
     detections = [
         {
+            "region": region,
             "text": text,
             "confidence": float(confidence),
-            "box": [[float(x), float(y) + y1] for x, y in box],
+            "box": [[float(x) + dx, float(y) + dy] for x, y in pts],
         }
-        for box, text, confidence in result
+        for pts, text, confidence in result
     ]
     return detections, ocr_s, crop_s
 
 
 def make_scan_fn(reader, image_path: Path, read_footer: bool) -> Callable[[], dict]:
-    """A function that OCRs the current photo (title band, plus footer band if asked)."""
+    """A function that OCRs the current photo: rotate it upright, then read the title box
+    (plus the footer box if asked)."""
     import cv2
 
     def scan() -> dict:
@@ -288,18 +302,20 @@ def make_scan_fn(reader, image_path: Path, read_footer: bool) -> Callable[[], di
         image = cv2.imread(str(image_path))
         if image is None:
             raise FileNotFoundError(f"Could not load image: {image_path}")
+        image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        cv2.imwrite(str(ROTATED_PATH), image)
         load_s = time.perf_counter() - t
 
-        bands = [(TITLE_BAND, TITLE_CROP_PATH)]
+        boxes = [("title", TITLE_BOX, TITLE_CROP_PATH)]
         if read_footer:
-            bands.append((FOOTER_BAND, FOOTER_CROP_PATH))
+            boxes.append(("footer", FOOTER_BOX, FOOTER_CROP_PATH))
 
         mem_avail, swap_used = mem_status()  # just before OCR: shows whether the Pi is swapping
         detections: list[dict] = []
         ocr_times: list[float] = []
         crop_total = 0.0
-        for band, crop_path in bands:
-            found, ocr_s, crop_s = read_band(reader, image, band, crop_path)
+        for region, box, crop_path in boxes:
+            found, ocr_s, crop_s = read_box(reader, image, box, crop_path, region)
             detections.extend(found)
             ocr_times.append(ocr_s)
             crop_total += crop_s

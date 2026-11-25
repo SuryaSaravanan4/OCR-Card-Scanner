@@ -58,7 +58,7 @@ def test_start_is_refused_until_the_pi_has_checked_in(clock):
 def test_the_pi_gets_start_once_then_idle_and_a_second_start_is_refused(clock):
     pi_link.poll(False)
     run = pi_link.start_run()
-    assert pi_link.poll(False) == {"command": "start", "run_id": run["id"]}
+    assert pi_link.poll(False) == {"command": "start", "run_id": run["id"], "cards": None}
     assert pi_link.poll(True) == {"command": "idle"}
     assert pi_link.state()["run"]["state"] == "running"
     with pytest.raises(pi_link.RunInProgress):
@@ -127,7 +127,7 @@ def test_idle_pi_goes_disconnected_after_the_short_timeout(clock):
 def test_scan_page_shows_not_connected_and_a_disabled_button(client):
     page = client.get("/scan").text
     assert "Pi not connected" in page
-    assert "disabled" in page and "Scan stack" in page
+    assert "disabled" in page and "Scan cards" in page
     assert 'id="picker"' in page
 
 
@@ -140,11 +140,13 @@ def test_full_run_through_the_routes(client, monkeypatch):
     monkeypatch.setattr(service, "search", lambda text, limit=10, set_code=None, collector_number=None:
                         [] if text == "Blurry" else [_hit(), _hit("Sol Ring", "def")])
     assert client.get("/api/pi/command?busy=0").json() == {"command": "idle"}
-    page = client.post("/scan/start", headers={"HX-Request": "true"}).text
-    assert "Stop" in page
+    page = client.post("/scan/start", data={"cards": "3"}, headers={"HX-Request": "true"}).text
+    assert "Stop" in page and "Starting a scan of 3 card(s)" in page
     cmd = client.get("/api/pi/command?busy=0").json()
-    assert cmd["command"] == "start"
+    assert cmd["command"] == "start" and cmd["cards"] == 3
     run_id = cmd["run_id"]
+    client.post("/api/pi/event", json={"run_id": run_id, "event": "progress", "card_no": 2})
+    assert "Scanning card 2 of 3" in client.get("/scan", headers={"HX-Request": "true"}).text
 
     # Card 1: identified by title. Card 2: unidentified on try 1, then replaced by try 2.
     base = {"detections": [_det("Sol Ring", 10, 20, 300, 60)], "run_id": run_id}
@@ -158,14 +160,17 @@ def test_full_run_through_the_routes(client, monkeypatch):
 
     client.post("/api/pi/event", json={"run_id": run_id, "event": "card_failed", "card_no": 2,
                                        "message": "could not identify the card after 3 tries"})
-    client.post("/api/pi/event", json={"run_id": run_id, "event": "finished", "reason": "no_card"})
+    client.post("/api/pi/event", json={"run_id": run_id, "event": "finished", "reason": "no_card",
+                                       "cards": 2, "identified": 1, "failed": 1})
 
     page = client.get("/scan", headers={"HX-Request": "true"}).text
     assert "<nav" not in page
     assert "Sol Ring" in page and "2 printing(s)" in page
     assert "Card 2: could not identify the card after 3 tries" in page
     assert "couldn't identify a card" in page
-    assert "stack is empty" in page
+    assert "Only 2 of 3 cards were scanned. 1 identified, 1 could not be identified" in page
+    assert "Not scanned: card 3." in page
+    assert "two cards may have fed together" in page and "scan-alert" in page
     assert page.index("Card 2") < page.index("Card 1")  # newest first
 
     picker = client.get(f"/scan/item/{rows[0]['id']}").text

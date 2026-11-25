@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Scan</h1>
+{# Outside the polled panel, so the 2 s refresh never wipes what you typed. #}
+<label class="scan-count" for="scan-count">How many cards to scan
+  <input id="scan-count" name="cards" type="number" min="1" max="{{ max_cards }}" step="1"
+         inputmode="numeric" placeholder="e.g. 15" required>
+</label>
 <div id="scan-panel" hx-get="/scan" hx-trigger="every 2s" hx-swap="innerHTML">
   {% include "_scan.html" %}
 </div>

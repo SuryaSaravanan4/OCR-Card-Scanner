@@ -1,15 +1,19 @@
 """The Pi side of the browser's "Scan stack" button.
 
 Runs on the Pi and waits. About once a second it asks the PC
-(`GET /api/pi/command`) whether the browser clicked "Scan stack". When it did, the
-Pi scans the whole stack by itself:
+(`GET /api/pi/command`) whether the browser clicked "Scan stack". The browser sends
+how many cards to scan, and the Pi scans exactly that many by itself:
 
-    for each card:  feed (A + B) -> photo -> OCR -> POST to the PC -> eject (B, reversed)
+    for each card:  feed (timed servo steps, see pi/feeder_config.stack.json)
+                    -> photo -> OCR -> POST to the PC
+                    (-> eject, only if the config has clear_s > 0)
+
+The next card is not moved until the current one has been photographed, read and sent.
 
 Retries (the card is NOT moved between tries; a new photo is taken each time):
   * no readable text   -> retry; still nothing after --attempts tries = no card in
-                          front of the camera (stack empty, or a jam): the run ends,
-                          nothing is ejected.
+                          front of the camera (stack ran out early, or a jam): the run
+                          ends before the requested count, and the browser says so.
   * PC found no card   -> retry; still nothing = the card is reported as failed (the
                           browser shows it), ejected, and the next card is fed.
   * PC unreachable     -> retry the POST a few times, then the run ends.
@@ -33,8 +37,9 @@ from pathlib import Path
 from typing import Callable
 
 from pi.autoscan import CaptureError, capture_photo, has_text, make_scan_fn, make_send_fn
-from pi.feeder import FeederError, build_feeder, describe_motion, load_settings
-from pi.one_card import DEFAULT_CONFIG
+from pi.feeder import FeederError, build_feeder, describe_feed, describe_motion, load_settings
+
+DEFAULT_CONFIG = Path(__file__).resolve().parent / "feeder_config.stack.json"
 
 DEFAULT_PC_URL = "http://127.0.0.1:8000"  # through the SSH tunnel from scripts/pi_link.ps1
 PHOTO_PATH = Path.home() / "stack_card.jpg"
@@ -54,13 +59,16 @@ def run_stack(
     sleep: Callable[[float], None] = time.sleep,
     say: Callable[[str], None] = print,
 ) -> dict:
-    """Scan cards until the stack is empty, Stop is pressed, or something fails.
+    """Scan `max_cards` cards (the count asked for in the browser), unless Stop is
+    pressed, the stack runs out, or something fails.
 
     Returns {"reason": why it ended, "cards": cards fed, "identified", "failed", "message"}.
-    `reason` is one of: no_card, stopped, max_cards, pc_unreachable, camera_error,
-    interrupted. The feeder is always stopped before this returns or raises.
+    `reason` is one of: done (all `max_cards` scanned), no_card, stopped,
+    pc_unreachable, camera_error, interrupted. The feeder is always stopped before this
+    returns or raises.
     """
-    result = {"reason": "max_cards", "cards": 0, "identified": 0, "failed": 0, "message": None}
+    result = {"reason": "done", "cards": 0, "identified": 0, "failed": 0, "message": None}
+    eject = getattr(getattr(feeder, "config", None), "clear_s", 0) > 0
 
     def send(scan: dict, card_no: int, attempt: int) -> dict | None:
         extra = {"run_id": run_id, "card_no": card_no, "attempt": attempt}
@@ -77,7 +85,8 @@ def run_stack(
             if should_stop():
                 result["reason"] = "stopped"
                 break
-            say(f"[card {card_no}] feeding")
+            event_fn({"event": "progress", "card_no": card_no})
+            say(f"[card {card_no}/{max_cards}] feeding")
             feeder.feed_cycle()
             result["cards"] = card_no
 
@@ -118,7 +127,7 @@ def run_stack(
             if not saw_text:
                 result["reason"] = "no_card"
                 result["cards"] = card_no - 1  # nothing was actually there
-                say(f"[card {card_no}] no card in front of the camera: stack empty or jammed")
+                say(f"[card {card_no}] no card in front of the camera: stack ran out or jammed")
                 break
             if identified:
                 result["identified"] += 1
@@ -126,8 +135,9 @@ def run_stack(
                 result["failed"] += 1
                 event_fn({"event": "card_failed", "card_no": card_no,
                           "message": f"{failure} after {attempts} tries"})
-            say(f"[card {card_no}] ejecting")
-            feeder.clear()
+            if eject:
+                say(f"[card {card_no}] ejecting")
+                feeder.clear()
     except KeyboardInterrupt:
         result["reason"] = "interrupted"
         say("Interrupted: stopping the servos.")
@@ -160,7 +170,7 @@ def _post_json(url: str, body: dict, timeout: float = 10.0) -> bool:
 
 def serve(
     get_command: Callable[[bool], dict | None],
-    start_run: Callable[[int], dict],
+    start_run: Callable[[int, int | None], dict],
     post_event: Callable[[dict], bool],
     sleep: Callable[[float], None] = time.sleep,
     say: Callable[[str], None] = print,
@@ -183,12 +193,15 @@ def serve(
         reachable = True
         if command.get("command") == "start":
             run_id = command["run_id"]
-            say(f"=== run {run_id}: scanning the stack ===")
-            result = start_run(run_id)
+            cards = command.get("cards")
+            say(f"=== run {run_id}: scanning {cards if cards else 'the stack'} card(s) ===")
+            result = start_run(run_id, cards)
             say(f"=== run {run_id} ended: {result['reason']} ({result['cards']} cards, "
                 f"{result['identified']} identified, {result['failed']} failed) ===")
             post_event({"run_id": run_id, "event": "finished",
-                        "reason": result["reason"], "message": result["message"]})
+                        "reason": result["reason"], "message": result["message"],
+                        "cards": result["cards"], "identified": result["identified"],
+                        "failed": result["failed"]})
             if result["reason"] == "interrupted":
                 return
         sleep(1.0)
@@ -200,7 +213,8 @@ def main() -> int:
     parser.add_argument("--pc-url", default=DEFAULT_PC_URL, help="the PC app's address (default: through the SSH tunnel)")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="feeder settings JSON")
     parser.add_argument("--attempts", type=int, default=3, help="tries per card before giving up")
-    parser.add_argument("--max-cards", type=int, default=60, help="safety cap on cards per run")
+    parser.add_argument("--max-cards", type=int, default=60,
+                        help="safety cap on cards per run (the browser's count is trimmed to this)")
     parser.add_argument("--speed", type=float, help="servo speed 0..1 (capped by max_speed)")
     parser.add_argument("--feed-s", type=float, help="seconds the servos push the card in")
     parser.add_argument("--settle-s", type=float, help="seconds to wait before the photo")
@@ -233,8 +247,8 @@ def main() -> int:
     f = settings.feed
     print(f"Servos: {'REAL' if args.real_motor else 'MOCK (nothing will move)'} | "
           + ", ".join(f"{n} on GPIO{p}" for n, p in zip(settings.names, settings.pins)))
-    print(f"speed {f.speed} | feed {f.feed_s} s ({describe_motion(f.feed_motors)}) | settle {f.settle_s} s | "
-          f"eject {f.clear_s} s ({describe_motion(f.clear_motors)}) | "
+    eject = f"eject {f.clear_s} s ({describe_motion(f.clear_motors)})" if f.clear_s > 0 else "no eject"
+    print(f"{describe_feed(f)} | wait {f.settle_s} s before the photo | {eject} | "
           f"{args.attempts} tries per card | max {args.max_cards} cards")
 
     base = args.pc_url.rstrip("/")
@@ -257,7 +271,11 @@ def main() -> int:
         def post_event(event: dict) -> bool:
             return _post_json(f"{base}/api/pi/event", event)
 
-        def start_run(run_id: int) -> dict:
+        def start_run(run_id: int, cards: int | None) -> dict:
+            count = args.max_cards if not cards else min(int(cards), args.max_cards)
+            if cards and int(cards) > args.max_cards:
+                print(f"Asked for {cards} cards; the Pi's safety cap is {args.max_cards} (--max-cards).")
+
             def should_stop() -> bool:
                 command = get_command(True)
                 return bool(command and command.get("command") == "stop")
@@ -266,7 +284,7 @@ def main() -> int:
                 feeder, capture_fn, scan_fn, send_fn,
                 event_fn=lambda e: post_event({"run_id": run_id, **e}),
                 should_stop=should_stop, run_id=run_id,
-                max_cards=args.max_cards, attempts=args.attempts,
+                max_cards=count, attempts=args.attempts,
             )
 
         serve(get_command, start_run, post_event)

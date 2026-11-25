@@ -273,6 +273,13 @@ class FeedConfig:
     # "forward"/"reverse" are relative to each servo's `invert` calibration.
     feed_motors: dict[str, str] | None = None
     clear_motors: dict[str, str] | None = None
+    # A timed feed in place of the single push (feed_s / feed_motors). Each step starts
+    # its servos together, then stops each one at its own time (seconds from the start
+    # of the step), e.g.
+    #   {"motors": {"servo_a": "forward", "servo_b": "forward"}, "speed": 0.1,
+    #    "stop_at": {"servo_b": 0.8, "servo_a": 2.3}}
+    # The steps run in order; settle_s is waited after the last one.
+    feed_steps: list[dict] | None = None
 
     def validate(self) -> None:
         if not (0 < self.speed <= self.max_speed <= 1):
@@ -293,6 +300,33 @@ class FeedConfig:
             bad = [d for d in spec.values() if d not in ("forward", "reverse")]
             if bad:
                 raise ValueError(f"{name}: direction must be 'forward' or 'reverse', got {bad}")
+        if self.feed_steps is not None:
+            if not self.feed_steps:
+                raise ValueError("feed_steps must have at least one step (or be left out)")
+            for i, step in enumerate(self.feed_steps, start=1):
+                self._validate_step(i, step)
+
+    def _validate_step(self, i: int, step: dict) -> None:
+        unknown_keys = sorted(set(step) - {"motors", "speed", "stop_at"})
+        if unknown_keys:
+            raise ValueError(f"feed step {i}: unknown setting(s) {unknown_keys}")
+        motors = step.get("motors") or {}
+        stop_at = step.get("stop_at") or {}
+        if not motors:
+            raise ValueError(f"feed step {i}: 'motors' must name at least one servo")
+        bad = [d for d in motors.values() if d not in ("forward", "reverse")]
+        if bad:
+            raise ValueError(f"feed step {i}: direction must be 'forward' or 'reverse', got {bad}")
+        if set(stop_at) != set(motors):
+            raise ValueError(f"feed step {i}: 'stop_at' must give a stop time for exactly the servos in 'motors'")
+        for name, t in stop_at.items():
+            if not (0 < t <= self.max_run_s):
+                raise ValueError(
+                    f"feed step {i}: {name} stop time {t}s must be > 0 and <= max_run_s={self.max_run_s}"
+                )
+        speed = step.get("speed", self.speed)
+        if not (0 < speed <= self.max_speed):
+            raise ValueError(f"feed step {i}: speed {speed} must be > 0 and <= max_speed={self.max_speed}")
 
 
 class Feeder:
@@ -314,6 +348,10 @@ class Feeder:
             unknown = sorted(set(spec) - names)
             if unknown:
                 raise ValueError(f"{spec_name} names unknown servo(s) {unknown}; servos are {sorted(names)}")
+        for i, step in enumerate(self.config.feed_steps or [], start=1):
+            unknown = sorted(set(step["motors"]) - names)
+            if unknown:
+                raise ValueError(f"feed step {i} names unknown servo(s) {unknown}; servos are {sorted(names)}")
         self.sleep = sleep
         self.clock = clock
         self._closed = False
@@ -356,17 +394,52 @@ class Feeder:
             self.stop()
         return self.clock() - started
 
+    def run_step(self, step: dict) -> list[tuple[str, float]]:
+        """Run one timed step: start its servos together, then stop each at its own
+        `stop_at` time (seconds from the step's start). Returns [(servo, stopped_at)] in
+        stop order. Every servo is stopped before this returns or raises.
+        """
+        by_name = {m.name: m for m in self.motors}
+        speed = step.get("speed", self.config.speed)
+        stops = sorted(step["stop_at"].items(), key=lambda item: item[1])
+        done: list[tuple[str, float]] = []
+        started = self.clock()
+        try:
+            for name, direction in step["motors"].items():
+                by_name[name].run(speed, direction == "forward")
+            planned = 0.0
+            for name, stop_at in stops:
+                # Sleep by the plan, corrected for time already spent (stopping a servo
+                # takes a few ms), so the last stop still lands on its planned time.
+                wait = max(0.0, (stop_at - planned) - max(0.0, self.clock() - started - planned))
+                self.sleep(wait)
+                planned = stop_at
+                by_name[name].stop()
+                done.append((name, self.clock() - started))
+        finally:
+            self.stop()
+        return done
+
     def feed_cycle(self) -> dict:
-        """Push the card in front of the camera, then wait for it to stop moving."""
-        feed_s = (
-            self.advance(self.config.feed_s, motors=self.config.feed_motors)
-            if self.config.feed_s > 0
-            else 0.0
-        )
+        """Push the card in front of the camera, then wait for it to stop moving.
+
+        With `feed_steps` configured this runs the timed steps in order; otherwise the
+        single push of `feed_s` seconds with `feed_motors`.
+        """
+        steps_done: list[list[tuple[str, float]]] = []
+        t0 = self.clock()
+        if self.config.feed_steps:
+            for step in self.config.feed_steps:
+                steps_done.append(self.run_step(step))
+            feed_s = self.clock() - t0
+        elif self.config.feed_s > 0:
+            feed_s = self.advance(self.config.feed_s, motors=self.config.feed_motors)
+        else:
+            feed_s = 0.0
         t = self.clock()
         if self.config.settle_s > 0:
             self.sleep(self.config.settle_s)
-        return {"feed_s": feed_s, "settle_s": self.clock() - t}
+        return {"feed_s": feed_s, "settle_s": self.clock() - t, "steps": steps_done}
 
     def clear(self) -> float:
         """Push the scanned card out of the way. Does nothing if clear_s is 0."""
@@ -466,6 +539,18 @@ def describe_motion(spec: dict[str, str] | None) -> str:
     if not spec:
         return "all servos"
     return ", ".join(f"{name} {direction}" for name, direction in spec.items())
+
+
+def describe_feed(feed: FeedConfig) -> str:
+    """One line describing the feed, for the start-up print."""
+    if not feed.feed_steps:
+        return f"speed {feed.speed} | feed {feed.feed_s} s ({describe_motion(feed.feed_motors)})"
+    parts = []
+    for i, step in enumerate(feed.feed_steps, start=1):
+        dirs = "/".join(sorted(set(step["motors"].values())))
+        stops = ", ".join(f"{n} stops {t}s" for n, t in sorted(step["stop_at"].items(), key=lambda x: x[1]))
+        parts.append(f"step {i}: {'+'.join(step['motors'])} {dirs} @{step.get('speed', feed.speed)} ({stops})")
+    return " -> ".join(parts)
 
 
 # BCM pin -> Pi 4 hardware PWM channel. 12 and 18 share channel 0; 13 and 19 share channel 1.

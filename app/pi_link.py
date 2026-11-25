@@ -23,19 +23,24 @@ from typing import Callable
 PI_TIMEOUT_S = 10.0
 RUN_TIMEOUT_S = 600.0
 
+# Most cards one run may ask for (the browser's box; the Pi also caps with --max-cards).
+MAX_CARDS = 60
+
 # What the page says for each way a run can end.
 REASONS = {
-    "no_card": "No card in front of the camera after several tries: the stack is empty, or a card is jammed.",
+    "done": "All requested cards were scanned.",
+    "no_card": "No card in front of the camera after several tries: the stack ran out early, or a card is jammed.",
     "stopped": "Stopped.",
-    "max_cards": "Stopped at the safety limit on cards per run.",
+    "max_cards": "Stopped at the Pi's safety limit on cards per run.",
     "camera_error": "The camera failed.",
     "interrupted": "The scanner program on the Pi was stopped.",
     "lost_connection": "The Pi stopped responding during the run.",
     "pi_idle": "The Pi ended the run.",
     "error": "The Pi hit an error.",
 }
-# Endings that are not a problem; anything else is shown as an error.
-NORMAL_ENDINGS = {"no_card", "stopped", "max_cards"}
+# Endings that are not a problem; anything else is shown as an error. With a card count
+# asked for, running out early (no_card) IS a problem: some cards were not scanned.
+NORMAL_ENDINGS = {"done", "stopped"}
 
 
 class PiNotConnected(RuntimeError):
@@ -79,9 +84,12 @@ def _check_lost_locked() -> None:
         _finish_locked("lost_connection")
 
 
-def start_run() -> dict:
-    """The browser's "Scan stack" click. Raises if the Pi isn't there or is busy."""
+def start_run(cards: int | None = None) -> dict:
+    """The browser's "Scan stack" click, for `cards` cards. Raises if the Pi isn't there
+    or is busy, and ValueError if the count is out of range."""
     global _run, _run_counter
+    if cards is not None and not (1 <= cards <= MAX_CARDS):
+        raise ValueError(f"Enter how many cards to scan: 1 to {MAX_CARDS}.")
     with _lock:
         _check_lost_locked()
         if not _connected_locked():
@@ -97,6 +105,11 @@ def start_run() -> dict:
             "reason": None,
             "message": None,
             "failures": [],
+            "requested": cards,
+            "current_card": None,
+            "fed": None,
+            "identified": None,
+            "failed": None,
         }
         return dict(_run)
 
@@ -121,7 +134,7 @@ def poll(busy: bool) -> dict:
             return {"command": "idle"}
         if _run["state"] == "requested":
             _run["state"] = "running"
-            return {"command": "start", "run_id": _run["id"]}
+            return {"command": "start", "run_id": _run["id"], "cards": _run["requested"]}
         if _run["state"] == "running":
             if not busy:
                 # The Pi is idle but we think a run is going: its "finished" report was
@@ -134,18 +147,23 @@ def poll(busy: bool) -> dict:
 
 
 def report(event: dict) -> None:
-    """An event from the Pi: card_failed, error, or finished."""
+    """An event from the Pi: progress, card_failed, error, or finished."""
     with _lock:
         if _run is None or event.get("run_id") != _run["id"]:
             return  # about an old run; ignore
         kind = event.get("event")
-        if kind == "card_failed":
+        if kind == "progress":
+            _run["current_card"] = event.get("card_no")
+        elif kind == "card_failed":
             _run["failures"].append(
                 {"card_no": event.get("card_no"), "message": event.get("message") or "could not identify"}
             )
         elif kind == "error":
             _run["failures"].append({"card_no": event.get("card_no"), "message": event.get("message") or "error"})
         elif kind == "finished":
+            for key, field in (("cards", "fed"), ("identified", "identified"), ("failed", "failed")):
+                if event.get(key) is not None:
+                    _run[field] = event[key]
             _finish_locked(event.get("reason") or "pi_idle", event.get("message"))
 
 
@@ -159,7 +177,59 @@ def state() -> dict:
             run["active"] = run["state"] in ("requested", "running")
             run["reason_text"] = REASONS.get(run["reason"], run["reason"]) if run["reason"] else None
             run["problem"] = bool(run["reason"]) and run["reason"] not in NORMAL_ENDINGS
+            run["summary"] = _summary(run)
+            if run["summary"] and run["summary"]["problem"]:
+                run["problem"] = True
         return {"connected": _connected_locked(), "run": run}
+
+
+def _summary(run: dict) -> dict | None:
+    """The end-of-run heads-up: what was asked for, what got scanned, what was missed.
+    None while the run is going, or for a run started without a card count."""
+    requested = run.get("requested")
+    if run["state"] != "finished" or not requested:
+        return None
+    # The Pi reports how many cards it fed; if its report never arrived (lost
+    # connection), the last card it started on is the best guess.
+    fed = run.get("fed")
+    if fed is None:
+        fed = run.get("current_card") or 0
+    failed = run.get("failed")
+    if failed is None:
+        failed = len({f["card_no"] for f in run["failures"] if f.get("card_no")})
+    identified = run.get("identified")
+    if identified is None:
+        identified = max(fed - failed, 0)
+
+    lines = []
+    if fed >= requested and run["reason"] == "done":
+        headline = f"Scanned all {requested} cards."
+    else:
+        headline = f"Only {fed} of {requested} cards were scanned."
+        if fed < requested:
+            missing = f"card {fed + 1}" if fed + 1 == requested else f"cards {fed + 1}-{requested}"
+            lines.append(f"Not scanned: {missing}.")
+        if run["reason"] == "no_card":
+            lines.append(
+                "There was no card in front of the camera. The stack may have run out "
+                "(two cards may have fed together earlier), or a card may be jammed."
+            )
+        elif run["reason_text"]:
+            lines.append(run["reason_text"] + (f" ({run['message']})" if run.get("message") else ""))
+    if fed:
+        tail = f"{identified} identified"
+        if failed:
+            tail += f", {failed} could not be identified (listed below)"
+        headline += f" {tail}."
+    return {
+        "requested": requested,
+        "fed": fed,
+        "identified": identified,
+        "failed": failed,
+        "headline": headline,
+        "lines": lines,
+        "problem": fed < requested or failed > 0,
+    }
 
 
 def clear() -> None:

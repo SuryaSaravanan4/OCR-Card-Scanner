@@ -275,6 +275,9 @@ th a.sort-link.active {
   margin-bottom: 1rem;
 }
 .scan-alert ul { margin: 0.3rem 0 0; }
+.scan-summary-line { margin: 0.3rem 0 0; }
+.scan-count { max-width: 16rem; }
+.scan-count input { margin-top: 0.25rem; }
 .scan-list li {
   margin-bottom: 0.4rem;
 }

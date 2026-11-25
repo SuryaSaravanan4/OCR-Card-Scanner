@@ -46,13 +46,21 @@ python -m uvicorn app.main:app --port 8000      # window 1: the app
 .\scripts\pi_link.ps1 -Mock                     #   ...or with mock servos (nothing moves)
 .\scripts\pi_link.ps1 -PiHost <new address>     #   ...if the Pi's address changed
 ```
-Open http://127.0.0.1:8000/scan. When it says **Pi connected**, load the stack and click **Scan stack**.
-The Pi then feeds, photographs, reads and ejects card after card on its own:
+Open http://127.0.0.1:8000/scan. When it says **Pi connected**, type **how many cards** you loaded
+(1-60) and click **Scan cards**. The Pi then scans exactly that many, one at a time:
+- **Feed** (`pi/feeder_config.stack.json`, the bench-tested sequence): A + B forward at 0.1, B stops
+  at 0.8 s, A at 2.3 s; then A + B reverse at 0.1, B stops 0.5 s later, A 1.0 s later; then a 1.0 s
+  wait. Then photo -> OCR -> PC. The next card does not move until this one is done. No eject.
+- **Crops**: the photo is rotated 90° counterclockwise (`~/rotated.jpg`), then the title box and the
+  footer box are cut out (`~/title_crop.jpg`, `~/footer_crop.jpg`). The boxes are `TITLE_BOX` and
+  `FOOTER_BOX` at the top of `pi/autoscan.py`.
+- The page shows "Scanning card k of N" while it runs, and a summary at the end.
 - Each card appears in the list; click its name to pick the printing and add it to the collection.
 - A card is retried up to 3 times **without moving it** (new photo each time). If the PC still can't
-  identify it, it is listed in red, ejected, and the run continues.
-- No readable text after 3 tries = no card in front of the camera: the run ends ("stack is empty, or
-  a card is jammed"). Nothing is ejected.
+  identify it, it is listed in red and the run continues.
+- No readable text after 3 tries = no card in front of the camera: the run ends early and the page
+  shows a red alert: "Only 9 of 15 cards were scanned. Not scanned: cards 10-15." The stack may have
+  run out (often because two cards fed together earlier) or a card may be jammed.
 - **Stop** in the browser takes effect before the next card. Ctrl+C or closing the `pi_link` window
   stops the scanner and the servos.
 - Each try is ~70 s of OCR, so the end-of-stack check takes about 3.5 minutes. Use

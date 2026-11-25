@@ -1,10 +1,15 @@
 <div class="scan-controls">
   {% if run and run.active %}
   <button type="button" class="secondary" hx-post="/scan/stop" hx-target="#scan-panel" hx-swap="innerHTML">Stop</button>
-  <span class="muted">Scanning the stack (started {{ run.started_at }})...</span>
+  <span class="muted">
+    {% if run.current_card and run.requested %}Scanning card {{ run.current_card }} of {{ run.requested }}
+    {%- elif run.requested %}Starting a scan of {{ run.requested }} card(s)
+    {%- else %}Scanning the stack{% endif %} (started {{ run.started_at }})...
+  </span>
   {% else %}
   <button type="button" hx-post="/scan/start" hx-target="#scan-panel" hx-swap="innerHTML"
-          {% if not link.connected %}disabled{% endif %}>Scan stack</button>
+          hx-include="#scan-count"
+          {% if not link.connected %}disabled{% endif %}>Scan cards</button>
   {% endif %}
   {% if link.connected %}
   <small class="pi-status pi-on">Pi connected</small>
@@ -15,6 +20,17 @@
 
 {% if message %}<p class="flash">{{ message }}</p>{% endif %}
 
+{% if run and run.summary %}
+<div class="{{ 'scan-alert' if run.summary.problem else 'flash' }}" role="{{ 'alert' if run.summary.problem else 'status' }}">
+  <strong>{{ run.summary.headline }}</strong>
+  {% for line in run.summary.lines %}<p class="scan-summary-line">{{ line }}</p>{% endfor %}
+</div>
+{% elif run and run.reason_text %}
+<p class="{{ 'scan-alert' if run.problem else 'flash' }}">
+  Run finished: {{ run.reason_text }}{% if run.message %} ({{ run.message }}){% endif %}
+</p>
+{% endif %}
+
 {% if run and run.failures %}
 <div class="scan-alert" role="alert">
   <strong>Some cards could not be scanned:</strong>
@@ -24,14 +40,8 @@
 </div>
 {% endif %}
 
-{% if run and run.reason_text %}
-<p class="{{ 'scan-alert' if run.problem else 'flash' }}">
-  Run finished: {{ run.reason_text }}{% if run.message %} ({{ run.message }}){% endif %}
-</p>
-{% endif %}
-
 {% if not rows %}
-<p class="muted">{% if run and run.active %}Waiting for the first card (about a minute per card)...{% elif run %}No cards were scanned in this run.{% else %}Waiting for a scan from the Raspberry Pi...{% endif %}</p>
+<p class="muted">{% if run and run.active %}Waiting for the first card (about a minute per card)...{% elif run %}No cards were scanned in this run.{% else %}Enter how many cards are loaded, then click Scan cards.{% endif %}</p>
 {% else %}
 <ol class="scan-list" reversed>
   {% for scan in rows %}

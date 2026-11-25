@@ -1,0 +1,48 @@
+{
+  "servos": [
+    {
+      "name": "servo_a",
+      "pin": 18,
+      "calibration": {
+        "stop_us": 1467,
+        "min_us": 700,
+        "max_us": 2300,
+        "deadband_us": 28,
+        "speed_scale": 1.0,
+        "invert": false
+      }
+    },
+    {
+      "name": "servo_b",
+      "pin": 19,
+      "calibration": {
+        "stop_us": 1467,
+        "min_us": 700,
+        "max_us": 2300,
+        "deadband_us": 28,
+        "speed_scale": 1.0,
+        "invert": false
+      }
+    }
+  ],
+  "feed": {
+    "speed": 0.1,
+    "max_speed": 0.5,
+    "feed_s": 0,
+    "settle_s": 1.0,
+    "clear_s": 0,
+    "max_run_s": 3.0,
+    "feed_steps": [
+      {
+        "motors": {"servo_a": "forward", "servo_b": "forward"},
+        "speed": 0.1,
+        "stop_at": {"servo_b": 0.8, "servo_a": 2.3}
+      },
+      {
+        "motors": {"servo_a": "reverse", "servo_b": "reverse"},
+        "speed": 0.1,
+        "stop_at": {"servo_b": 0.5, "servo_a": 1.0}
+      }
+    ]
+  }
+}

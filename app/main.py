@@ -302,7 +302,7 @@ def _scan_context(message: str | None = None) -> dict:
     else:
         latest = scans.latest()
         rows = [latest] if latest else []
-    return {"link": link, "run": run, "rows": rows, "message": message}
+    return {"link": link, "run": run, "rows": rows, "message": message, "max_cards": pi_link.MAX_CARDS}
 
 
 def _render_scan_panel(request: Request, message: str | None = None):
@@ -316,11 +316,16 @@ def scan_page(request: Request):
 
 
 @app.post("/scan/start", response_class=HTMLResponse)
-def scan_start(request: Request):
+def scan_start(request: Request, cards: str = Form("")):
+    # Taken as text so an empty or non-numeric box shows a message instead of a 422.
     try:
-        pi_link.start_run()
+        count = int(cards.strip())
+    except ValueError:
+        count = 0
+    try:
+        pi_link.start_run(count)
         message = None
-    except (pi_link.PiNotConnected, pi_link.RunInProgress) as exc:
+    except (pi_link.PiNotConnected, pi_link.RunInProgress, ValueError) as exc:
         message = str(exc)
     return _render_scan_panel(request, message)
 
@@ -345,6 +350,10 @@ class PiEvent(BaseModel):
     card_no: int | None = None
     reason: str | None = None
     message: str | None = None
+    # Sent with "finished": how many cards were fed, identified, and not identified.
+    cards: int | None = None
+    identified: int | None = None
+    failed: int | None = None
 
 
 @app.get("/api/pi/command")

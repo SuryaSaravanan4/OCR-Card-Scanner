@@ -238,7 +238,8 @@ def _det(text, x0, y0, x1, y1, confidence=0.9):
 def test_scan_page_waits_when_nothing_scanned(client, clean_scans):
     resp = client.get("/scan")
     assert resp.status_code == 200
-    assert "Waiting for a scan" in resp.text
+    assert "Enter how many cards are loaded" in resp.text
+    assert 'id="scan-count"' in resp.text and 'max="60"' in resp.text
 
 
 def test_api_scan_exact_footer_match_shows_on_scan_page(client, clean_scans, monkeypatch):
